@@ -4,15 +4,15 @@ services:
     container_name: moodify-postgres
     restart: unless-stopped
     environment:
-      POSTGRES_DB: ${DB_NAME:-moodify}
-      POSTGRES_USER: ${DB_USER:-moodify}
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-moodify_dev}
+      POSTGRES_DB: ${DB_NAME:?DB_NAME is required}
+      POSTGRES_USER: ${DB_USER:?DB_USER is required}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
     ports:
       - "${DB_PORT:-5432}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-moodify} -d ${DB_NAME:-moodify}"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
       timeout: 5s
       retries: 5

@@ -15,9 +15,9 @@ type Config struct {
 	// Database
 	DBHost     string `env:"DB_HOST,notEmpty" envDefault:"localhost"`
 	DBPort     int    `env:"DB_PORT" envDefault:"5432"`
-	DBUser     string `env:"DB_USER,notEmpty" envDefault:"test_user"`
-	DBPassword string `env:"DB_PASSWORD" envDefault:"testing"`
-	DBName     string `env:"DB_NAME,notEmpty" envDefault:"moods_testing"`
+	DBUser     string `env:"DB_USER,required"`
+	DBPassword string `env:"DB_PASSWORD,required"`
+	DBName     string `env:"DB_NAME,required"`
 
 	// Storage
 	UploadDir string `env:"UPLOAD_DIR,notEmpty" envDefault:"./uploads"`

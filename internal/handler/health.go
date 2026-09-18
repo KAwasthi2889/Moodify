@@ -20,7 +20,7 @@ func Health(db *database.DB) http.HandlerFunc {
 
 		writeJSON(w, http.StatusOK, map[string]string{
 			"status":  "healthy",
-			"service": "moodify",
+			"service": "moodifydb",
 		})
 	}
 }

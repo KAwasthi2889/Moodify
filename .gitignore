@@ -2,3 +2,4 @@ local
 .env
 uploads
 python/.venv/
+__pycache__/

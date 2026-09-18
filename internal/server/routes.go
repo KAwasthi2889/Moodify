@@ -24,6 +24,9 @@ func (s *Server) routes() http.Handler {
 	// ── Routes ─────────────────────────────────────
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Get("/health", handler.Health(s.db))
+
+		// Song endpoints
+		r.Post("/songs/upload", handler.Upload(s.db, s.store))
 	})
 
 	return r

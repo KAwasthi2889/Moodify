@@ -1,0 +1,8 @@
+# Phase 2: Song identification & metadata
+# mutagen
+# musicbrainzngs
+# pyacoustid
+
+# Phase 3: Audio analysis
+# librosa
+# numpy

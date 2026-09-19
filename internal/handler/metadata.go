@@ -193,7 +193,7 @@ func RenameSong(db *database.DB, store storage.FileStore) http.HandlerFunc {
 		}
 
 		baseName = sanitizeFilename(baseName)
-		ext := filepath.Ext(song.FilePath)
+		ext := "." + song.Format
 		targetFilename := fmt.Sprintf("%s%s", baseName, ext)
 
 		// Rename file on storage with collision prevention

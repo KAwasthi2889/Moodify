@@ -56,11 +56,15 @@ func Upload(db *database.DB, store storage.FileStore) http.HandlerFunc {
 		// Check extension vs detected format; log warning if mismatch.
 		ext := strings.TrimPrefix(filepath.Ext(header.Filename), ".")
 		extFormat := extensionToFormat(strings.ToLower(ext))
-		if extFormat != "" && extFormat != detectedFormat {
-			slog.Warn("file extension does not match detected format",
+		hasExtMismatch := extFormat != "" && extFormat != detectedFormat
+		correctedName := strings.TrimSuffix(header.Filename, filepath.Ext(header.Filename)) + "." + string(detectedFormat)
+
+		if hasExtMismatch {
+			slog.Warn("file extension does not match detected format - extension corrected",
 				"filename", header.Filename,
 				"extension", ext,
 				"detected_format", detectedFormat,
+				"corrected_filename", correctedName,
 			)
 		}
 
@@ -98,17 +102,28 @@ func Upload(db *database.DB, store storage.FileStore) http.HandlerFunc {
 			"song_id", song.ID,
 			"original_name", header.Filename,
 			"detected_format", detectedFormat,
+			"extension_corrected", hasExtMismatch,
 			"size_bytes", header.Size,
 		)
 
-		respondJSON(w, http.StatusCreated, map[string]any{
-			"id":              song.ID,
-			"filename":        storedName,
-			"original_name":   header.Filename,
-			"detected_format": detectedFormat,
-			"size_bytes":      header.Size,
-			"status":          "uploaded",
-		})
+		resp := map[string]any{
+			"id":                  song.ID,
+			"filename":            storedName,
+			"original_name":       header.Filename,
+			"corrected_filename":  correctedName,
+			"extension_corrected": hasExtMismatch,
+			"detected_format":     detectedFormat,
+			"size_bytes":          header.Size,
+			"status":              "uploaded",
+		}
+		if hasExtMismatch {
+			resp["format_warning"] = fmt.Sprintf(
+				"File extension '.%s' does not match detected audio format '%s'. Extension automatically corrected to '.%s'.",
+				ext, detectedFormat, detectedFormat,
+			)
+		}
+
+		respondJSON(w, http.StatusCreated, resp)
 	}
 }
 

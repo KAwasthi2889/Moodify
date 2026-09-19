@@ -73,7 +73,3 @@ func ExtensionToFormat(ext string) AudioFormat {
 	}
 }
 
-// Extension returns the standard file extension for the format (without leading dot).
-func (f AudioFormat) Extension() string {
-	return string(f)
-}

@@ -51,15 +51,10 @@ func TestGetSongFeatures_InvalidID(t *testing.T) {
 }
 
 func TestAnalyzeSong_Integration(t *testing.T) {
-	dsn := os.Getenv("DATABASE_URL")
-	if dsn == "" {
-		dsn = "postgres://ever:first_commit@localhost:5432/moods?sslmode=disable"
-	}
-
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	db, err := database.Connect(ctx, dsn)
+	db, err := database.Connect(ctx, testDSN())
 	if err != nil {
 		t.Skipf("skipping test, postgres unavailable: %v", err)
 		return
@@ -136,15 +131,10 @@ func TestAnalyzeSong_Integration(t *testing.T) {
 }
 
 func TestAnalyzeSong_NonExistentSong(t *testing.T) {
-	dsn := os.Getenv("DATABASE_URL")
-	if dsn == "" {
-		dsn = "postgres://ever:first_commit@localhost:5432/moods?sslmode=disable"
-	}
-
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	db, err := database.Connect(ctx, dsn)
+	db, err := database.Connect(ctx, testDSN())
 	if err != nil {
 		t.Skipf("skipping test, postgres unavailable: %v", err)
 		return

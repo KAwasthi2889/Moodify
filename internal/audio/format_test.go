@@ -127,3 +127,35 @@ func TestDetectFormat(t *testing.T) {
 		})
 	}
 }
+
+func TestExtensionToFormat(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		ext      string
+		expected audio.AudioFormat
+	}{
+		{"mp3", audio.FormatMP3},
+		{"m4a", audio.FormatM4A},
+		{"aac", audio.FormatM4A},
+		{"flac", audio.FormatFLAC},
+		{"wav", audio.FormatWAV},
+		{"opus", audio.FormatOPUS},
+		{"ogg", audio.FormatOPUS},
+		{"png", ""},
+		{"exe", ""},
+		{"unknown", ""},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.ext, func(t *testing.T) {
+			t.Parallel()
+			got := audio.ExtensionToFormat(tt.ext)
+			if got != tt.expected {
+				t.Errorf("audio.ExtensionToFormat(%q) = %q, want %q", tt.ext, got, tt.expected)
+			}
+		})
+	}
+}
+

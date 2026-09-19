@@ -88,16 +88,19 @@ func TestFormatAndParseVector(t *testing.T) {
 	})
 }
 
-func TestSongFeaturesIntegration(t *testing.T) {
+func testDSN() string {
 	dsn := os.Getenv("DATABASE_URL")
 	if dsn == "" {
-		dsn = "postgres://ever:first_commit@localhost:5432/moods?sslmode=disable"
+		return "postgres://ever:first_commit@localhost:5432/moods?sslmode=disable"
 	}
+	return dsn
+}
 
+func TestSongFeaturesIntegration(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	db, err := Connect(ctx, dsn)
+	db, err := Connect(ctx, testDSN())
 	if err != nil {
 		t.Skipf("skipping integration test, postgres unavailable: %v", err)
 		return
@@ -203,27 +206,18 @@ func TestSongFeaturesIntegration(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error after song deletion, got nil")
 	}
-	if !errors.Is(err, pgx.ErrNoRows) && !isNotFound(err) {
+	if !errors.Is(err, pgx.ErrNoRows) {
 		t.Errorf("expected not found / no rows error, got: %v", err)
 	}
-}
-
-func isNotFound(err error) bool {
-	return err != nil && (errors.Is(err, pgx.ErrNoRows) || errors.Unwrap(err) == pgx.ErrNoRows)
 }
 
 func TestFindSimilarSongsIntegration(t *testing.T) {
 	t.Parallel()
 
-	dsn := os.Getenv("DATABASE_URL")
-	if dsn == "" {
-		dsn = "postgres://ever:first_commit@localhost:5432/moods?sslmode=disable"
-	}
-
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	db, err := Connect(ctx, dsn)
+	db, err := Connect(ctx, testDSN())
 	if err != nil {
 		t.Skipf("skipping integration test: database not reachable: %v", err)
 	}
@@ -323,40 +317,36 @@ func TestFindSimilarSongsIntegration(t *testing.T) {
 	}
 }
 
-func TestGetMoodClustersIntegration(t *testing.T) {
+func TestDatabase_NotFoundWrapping(t *testing.T) {
 	t.Parallel()
 
-	dsn := os.Getenv("DATABASE_URL")
-	if dsn == "" {
-		dsn = "postgres://ever:first_commit@localhost:5432/moods?sslmode=disable"
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	db, err := Connect(ctx, dsn)
+	db, err := Connect(ctx, testDSN())
 	if err != nil {
-		t.Skipf("skipping integration test: database not reachable: %v", err)
+		t.Skipf("skipping integration test, postgres unavailable: %v", err)
 	}
 	defer db.Close()
 
-	clusters, err := db.GetMoodClusters(ctx)
-	if err != nil {
-		t.Fatalf("GetMoodClusters failed: %v", err)
+	randomID := uuid.New()
+
+	// D1: GetSong must wrap pgx.ErrNoRows with %w
+	_, err = db.GetSong(ctx, randomID)
+	if !errors.Is(err, pgx.ErrNoRows) {
+		t.Errorf("GetSong for non-existent song did not wrap pgx.ErrNoRows: %v", err)
 	}
 
-	// Should successfully return slice (can be empty or have clusters depending on DB state)
-	if clusters == nil {
-		t.Fatal("expected non-nil clusters slice")
+	// D2: GetMetadata must wrap pgx.ErrNoRows with %w
+	_, _, err = db.GetMetadata(ctx, randomID)
+	if !errors.Is(err, pgx.ErrNoRows) {
+		t.Errorf("GetMetadata for non-existent song did not wrap pgx.ErrNoRows: %v", err)
 	}
 
-	for _, c := range clusters {
-		if c.Count <= 0 {
-			t.Errorf("cluster %s has non-positive count %d", c.Mood, c.Count)
-		}
-		if len(c.Songs) != c.Count {
-			t.Errorf("cluster %s count mismatch: %d != %d", c.Mood, c.Count, len(c.Songs))
-		}
+	// D3: UpdateSongFile must wrap pgx.ErrNoRows with %w
+	err = db.UpdateSongFile(ctx, randomID, "new.mp3", "/tmp/new.mp3")
+	if !errors.Is(err, pgx.ErrNoRows) {
+		t.Errorf("UpdateSongFile for non-existent song did not wrap pgx.ErrNoRows: %v", err)
 	}
 }
 

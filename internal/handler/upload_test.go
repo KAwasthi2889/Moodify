@@ -12,7 +12,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KAwasthi2889/Moodify/internal/audio"
 	"github.com/KAwasthi2889/Moodify/internal/database"
 	"github.com/KAwasthi2889/Moodify/internal/storage"
 )
@@ -47,47 +46,19 @@ func TestSanitizeFilename(t *testing.T) {
 	}
 }
 
-func TestExtensionToFormat(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		ext      string
-		expected audio.AudioFormat
-	}{
-		{"mp3", audio.FormatMP3},
-		{"m4a", audio.FormatM4A},
-		{"aac", audio.FormatM4A},
-		{"flac", audio.FormatFLAC},
-		{"wav", audio.FormatWAV},
-		{"opus", audio.FormatOPUS},
-		{"ogg", audio.FormatOPUS},
-		{"png", ""},
-		{"exe", ""},
-		{"unknown", ""},
+func testDSN() string {
+	dsn := os.Getenv("DATABASE_URL")
+	if dsn == "" {
+		return "postgres://ever:first_commit@localhost:5432/moods?sslmode=disable"
 	}
-
-	for _, tt := range tests {
-		tt := tt
-		t.Run(tt.ext, func(t *testing.T) {
-			t.Parallel()
-			got := audio.ExtensionToFormat(tt.ext)
-			if got != tt.expected {
-				t.Errorf("audio.ExtensionToFormat(%q) = %q, want %q", tt.ext, got, tt.expected)
-			}
-		})
-	}
+	return dsn
 }
 
 func TestUploadHandler(t *testing.T) {
-	dsn := os.Getenv("DATABASE_URL")
-	if dsn == "" {
-		dsn = "postgres://ever:first_commit@localhost:5432/moods?sslmode=disable"
-	}
-
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	db, err := database.Connect(ctx, dsn)
+	db, err := database.Connect(ctx, testDSN())
 	if err != nil {
 		t.Skipf("skipping upload handler test, database unavailable: %v", err)
 		return

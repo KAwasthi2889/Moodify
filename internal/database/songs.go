@@ -127,7 +127,7 @@ func (db *DB) UpdateSongFile(ctx context.Context, id uuid.UUID, filename, filePa
 		return fmt.Errorf("update song file %s: %w", id, err)
 	}
 	if res.RowsAffected() == 0 {
-		return fmt.Errorf("song %s not found", id)
+		return fmt.Errorf("song %s not found: %w", id, pgx.ErrNoRows)
 	}
 	return nil
 }

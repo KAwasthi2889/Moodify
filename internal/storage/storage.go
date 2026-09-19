@@ -12,7 +12,6 @@ import (
 // FileStore defines operations for persisting audio files.
 type FileStore interface {
 	Save(ctx context.Context, filename string, reader io.Reader) (string, error)
-	Get(ctx context.Context, path string) (io.ReadCloser, error)
 	Delete(ctx context.Context, path string) error
 	Rename(ctx context.Context, oldPath, desiredFilename string) (finalPath string, finalFilename string, err error)
 }
@@ -61,14 +60,6 @@ func (s *LocalStore) Save(_ context.Context, filename string, reader io.Reader) 
 	}
 
 	return destPath, nil
-}
-
-func (s *LocalStore) Get(_ context.Context, path string) (io.ReadCloser, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, fmt.Errorf("open file: %w", err)
-	}
-	return f, nil
 }
 
 func (s *LocalStore) Delete(_ context.Context, path string) error {

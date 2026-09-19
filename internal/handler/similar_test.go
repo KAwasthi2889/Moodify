@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"testing"
 	"time"
 
@@ -85,15 +84,10 @@ func TestGetSimilarSongs_InvalidThreshold(t *testing.T) {
 func TestGetSimilarSongs_NotFound(t *testing.T) {
 	t.Parallel()
 
-	dsn := os.Getenv("DATABASE_URL")
-	if dsn == "" {
-		dsn = "postgres://ever:first_commit@localhost:5432/moods?sslmode=disable"
-	}
-
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	db, err := database.Connect(ctx, dsn)
+	db, err := database.Connect(ctx, testDSN())
 	if err != nil {
 		t.Skipf("skipping test, postgres unavailable: %v", err)
 		return
@@ -117,15 +111,10 @@ func TestGetSimilarSongs_NotFound(t *testing.T) {
 func TestGetSimilarSongs_Success(t *testing.T) {
 	t.Parallel()
 
-	dsn := os.Getenv("DATABASE_URL")
-	if dsn == "" {
-		dsn = "postgres://ever:first_commit@localhost:5432/moods?sslmode=disable"
-	}
-
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	db, err := database.Connect(ctx, dsn)
+	db, err := database.Connect(ctx, testDSN())
 	if err != nil {
 		t.Skipf("skipping test, postgres unavailable: %v", err)
 		return
@@ -240,15 +229,10 @@ func TestGetSimilarSongs_Success(t *testing.T) {
 func TestGetMoodClusters_Success(t *testing.T) {
 	t.Parallel()
 
-	dsn := os.Getenv("DATABASE_URL")
-	if dsn == "" {
-		dsn = "postgres://ever:first_commit@localhost:5432/moods?sslmode=disable"
-	}
-
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	db, err := database.Connect(ctx, dsn)
+	db, err := database.Connect(ctx, testDSN())
 	if err != nil {
 		t.Skipf("skipping test, postgres unavailable: %v", err)
 		return

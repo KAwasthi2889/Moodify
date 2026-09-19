@@ -34,6 +34,8 @@ func (s *Server) routes() http.Handler {
 		r.Post("/songs/{id}/rename", handler.RenameSong(s.db, s.store))
 		r.Post("/songs/{id}/analyze", handler.AnalyzeSong(s.db, s.analyzer))
 		r.Get("/songs/{id}/features", handler.GetSongFeatures(s.db))
+		r.Get("/songs/clusters", handler.GetMoodClusters(s.db))
+		r.Get("/songs/{id}/similar", handler.GetSimilarSongs(s.db))
 	})
 
 	return r

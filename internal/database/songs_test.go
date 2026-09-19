@@ -211,3 +211,152 @@ func TestSongFeaturesIntegration(t *testing.T) {
 func isNotFound(err error) bool {
 	return err != nil && (errors.Is(err, pgx.ErrNoRows) || errors.Unwrap(err) == pgx.ErrNoRows)
 }
+
+func TestFindSimilarSongsIntegration(t *testing.T) {
+	t.Parallel()
+
+	dsn := os.Getenv("DATABASE_URL")
+	if dsn == "" {
+		dsn = "postgres://ever:first_commit@localhost:5432/moods?sslmode=disable"
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	db, err := Connect(ctx, dsn)
+	if err != nil {
+		t.Skipf("skipping integration test: database not reachable: %v", err)
+	}
+	defer db.Close()
+
+	// 1. Test non-existent song ID returns pgx.ErrNoRows
+	randomID := uuid.New()
+	_, err = db.FindSimilarSongs(ctx, randomID, 0.70, 5)
+	if !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("expected pgx.ErrNoRows for unanalyzed song, got: %v", err)
+	}
+
+	// 2. Create 3 test songs: Target A, Similar B, Dissimilar C
+	createTestSongWithFeatures := func(name string, vec []float32, moods []string) (*Song, *SongFeatures) {
+		s := &Song{
+			SessionID:    "sim-test-session",
+			Filename:     name + ".mp3",
+			OriginalName: name,
+			Format:       "mp3",
+			FilePath:     "/tmp/" + name + ".mp3",
+			SizeBytes:    1024,
+			Status:       "ready",
+		}
+		if err := db.CreateSong(ctx, s); err != nil {
+			t.Fatalf("failed to create test song %s: %v", name, err)
+		}
+		feat := &SongFeatures{
+			SongID: s.ID,
+			AcousticFeatures: audio.AcousticFeatures{
+				DurationSec: 150.0,
+				TempoBPM:    120.0,
+				Energy:      0.7,
+				Brightness:  2000.0,
+			},
+			MatchedMoods: moods,
+			VibeScores:   map[string]float64{"Energetic": 0.8},
+			MoodVector:   vec,
+		}
+		if _, err := db.UpsertFeatures(ctx, feat); err != nil {
+			t.Fatalf("failed to upsert features for %s: %v", name, err)
+		}
+		return s, feat
+	}
+
+	// Vectors of dimension 36:
+	// Target A: [1, 0, 0, ...]
+	vecA := make([]float32, 36)
+	vecA[0] = 1.0
+
+	// Similar B: [0.95, 0.31, 0, ...] (close to A in cosine space, sim ~ 0.95)
+	vecB := make([]float32, 36)
+	vecB[0] = 0.95
+	vecB[1] = 0.31
+
+	// Dissimilar C: [0, 1, 0, ...] (orthogonal to A, sim ~ 0.0)
+	vecC := make([]float32, 36)
+	vecC[1] = 1.0
+
+	songA, _ := createTestSongWithFeatures("song_target_a", vecA, []string{"Club / Dance"})
+	songB, _ := createTestSongWithFeatures("song_similar_b", vecB, []string{"Club / Dance"})
+	songC, _ := createTestSongWithFeatures("song_dissimilar_c", vecC, []string{"Chill / Ambient"})
+
+	defer func() {
+		_, _ = db.Pool.Exec(context.Background(), "DELETE FROM songs WHERE id IN ($1, $2, $3)", songA.ID, songB.ID, songC.ID)
+	}()
+
+	// Query with high threshold (0.80): only Song B should qualify (Song C is ~0.0 similarity)
+	simsFiltered, err := db.FindSimilarSongs(ctx, songA.ID, 0.80, 10)
+	if err != nil {
+		t.Fatalf("FindSimilarSongs with threshold failed: %v", err)
+	}
+	if len(simsFiltered) != 1 {
+		t.Fatalf("expected exactly 1 similar song above 0.80 threshold, got %d", len(simsFiltered))
+	}
+	if simsFiltered[0].ID != songB.ID {
+		t.Errorf("expected Song B, got %s", simsFiltered[0].ID)
+	}
+
+	// Query with broad threshold (0.0): both Song B and Song C should qualify, ordered by similarity
+	simsAll, err := db.FindSimilarSongs(ctx, songA.ID, 0.0, 10)
+	if err != nil {
+		t.Fatalf("FindSimilarSongs with broad threshold failed: %v", err)
+	}
+	if len(simsAll) < 2 {
+		t.Fatalf("expected at least 2 similar songs with threshold 0.0, got %d", len(simsAll))
+	}
+
+	// Song B should be first (closest cosine distance to A)
+	if simsAll[0].ID != songB.ID {
+		t.Errorf("expected closest song to be B (%s), got %s", songB.ID, simsAll[0].ID)
+	}
+	if simsAll[0].SimilarityScore <= simsAll[1].SimilarityScore {
+		t.Errorf("expected B similarity (%f) > C similarity (%f)", simsAll[0].SimilarityScore, simsAll[1].SimilarityScore)
+	}
+	if simsAll[0].Distance >= simsAll[1].Distance {
+		t.Errorf("expected B distance (%f) < C distance (%f)", simsAll[0].Distance, simsAll[1].Distance)
+	}
+}
+
+func TestGetMoodClustersIntegration(t *testing.T) {
+	t.Parallel()
+
+	dsn := os.Getenv("DATABASE_URL")
+	if dsn == "" {
+		dsn = "postgres://ever:first_commit@localhost:5432/moods?sslmode=disable"
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	db, err := Connect(ctx, dsn)
+	if err != nil {
+		t.Skipf("skipping integration test: database not reachable: %v", err)
+	}
+	defer db.Close()
+
+	clusters, err := db.GetMoodClusters(ctx)
+	if err != nil {
+		t.Fatalf("GetMoodClusters failed: %v", err)
+	}
+
+	// Should successfully return slice (can be empty or have clusters depending on DB state)
+	if clusters == nil {
+		t.Fatal("expected non-nil clusters slice")
+	}
+
+	for _, c := range clusters {
+		if c.Count <= 0 {
+			t.Errorf("cluster %s has non-positive count %d", c.Mood, c.Count)
+		}
+		if len(c.Songs) != c.Count {
+			t.Errorf("cluster %s count mismatch: %d != %d", c.Mood, c.Count, len(c.Songs))
+		}
+	}
+}
+

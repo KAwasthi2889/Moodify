@@ -55,7 +55,7 @@ func Upload(db *database.DB, store storage.FileStore) http.HandlerFunc {
 
 		// Check extension vs detected format; log warning if mismatch.
 		ext := strings.TrimPrefix(filepath.Ext(header.Filename), ".")
-		extFormat := extensionToFormat(strings.ToLower(ext))
+		extFormat := audio.ExtensionToFormat(strings.ToLower(ext))
 		hasExtMismatch := extFormat != "" && extFormat != detectedFormat
 		correctedName := strings.TrimSuffix(header.Filename, filepath.Ext(header.Filename)) + "." + string(detectedFormat)
 
@@ -127,23 +127,6 @@ func Upload(db *database.DB, store storage.FileStore) http.HandlerFunc {
 	}
 }
 
-// extensionToFormat maps file extensions to audio.AudioFormat.
-func extensionToFormat(ext string) audio.AudioFormat {
-	switch ext {
-	case "mp3":
-		return audio.FormatMP3
-	case "m4a", "aac", "mp4":
-		return audio.FormatM4A
-	case "flac":
-		return audio.FormatFLAC
-	case "wav":
-		return audio.FormatWAV
-	case "opus", "ogg":
-		return audio.FormatOPUS
-	default:
-		return ""
-	}
-}
 
 // generateFilename creates a unique storage filename with the correct extension.
 func generateFilename(original string, format string) string {

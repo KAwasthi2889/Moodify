@@ -149,13 +149,23 @@ def embed_tags(file_path: str, meta: Dict[str, Any]) -> Dict[str, Any]:
 
         mime_type = type(f).__name__
 
-        if "MP3" in mime_type or file_path.lower().endswith(".mp3"):
-            embed_mp3(file_path, meta)
-        elif "MP4" in mime_type or file_path.lower().endswith((".m4a", ".mp4", ".aac")):
+        # Match by detected Mutagen container type first (handles mismatched extensions)
+        if "MP4" in mime_type:
             embed_m4a(file_path, meta)
-        elif "FLAC" in mime_type or file_path.lower().endswith(".flac"):
+        elif "MP3" in mime_type:
+            embed_mp3(file_path, meta)
+        elif "FLAC" in mime_type:
             embed_flac(file_path, meta)
-        elif "OggOpus" in mime_type or file_path.lower().endswith((".opus", ".ogg")):
+        elif "OggOpus" in mime_type or "Ogg" in mime_type:
+            embed_opus(file_path, meta)
+        # Fallback to extension check if container is generic
+        elif file_path.lower().endswith((".m4a", ".mp4", ".aac")):
+            embed_m4a(file_path, meta)
+        elif file_path.lower().endswith(".mp3"):
+            embed_mp3(file_path, meta)
+        elif file_path.lower().endswith(".flac"):
+            embed_flac(file_path, meta)
+        elif file_path.lower().endswith((".opus", ".ogg")):
             embed_opus(file_path, meta)
         else:
             return {"status": "error", "message": f"Unsupported format type: {mime_type}"}

@@ -54,3 +54,26 @@ func DetectFormat(header []byte) AudioFormat {
 
 	return ""
 }
+
+// ExtensionToFormat maps a file extension (e.g. "mp3", "m4a", "aac", "flac") to AudioFormat.
+func ExtensionToFormat(ext string) AudioFormat {
+	switch ext {
+	case "mp3":
+		return FormatMP3
+	case "m4a", "aac", "mp4":
+		return FormatM4A
+	case "flac":
+		return FormatFLAC
+	case "wav":
+		return FormatWAV
+	case "opus", "ogg":
+		return FormatOPUS
+	default:
+		return ""
+	}
+}
+
+// Extension returns the standard file extension for the format (without leading dot).
+func (f AudioFormat) Extension() string {
+	return string(f)
+}

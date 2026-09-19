@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/KAwasthi2889/Moodify/internal/audio"
 	"github.com/KAwasthi2889/Moodify/internal/metadata"
 )
 
@@ -131,24 +132,24 @@ func (db *DB) UpdateSongFile(ctx context.Context, id uuid.UUID, filename, filePa
 
 // SongFeatures represents the 36-D acoustic feature extraction result stored in the database.
 type SongFeatures struct {
-	ID              uuid.UUID          `json:"id"`
-	SongID          uuid.UUID          `json:"song_id"`
-	DurationSec     float32            `json:"duration_sec"`
-	TempoBPM        float32            `json:"tempo_bpm"`
-	Energy          float32            `json:"energy"`
-	Brightness      float32            `json:"brightness"`
-	HarmonicRatio   float32            `json:"harmonic_ratio"`
-	PercussiveRatio float32            `json:"percussive_ratio"`
-	BeatImpact      float32            `json:"beat_impact"`
-	DistortionZCR   float32            `json:"distortion_zcr"`
-	MatchedMoods    []string           `json:"matched_moods"`
-	VibeScores      map[string]float64 `json:"vibe_scores"`
-	MoodVector      []float32          `json:"mood_vector"`
-	AnalyzedAt      time.Time          `json:"analyzed_at"`
+	ID     uuid.UUID `json:"id"`
+	SongID uuid.UUID `json:"song_id"`
+	audio.AcousticFeatures
+	MatchedMoods []string           `json:"matched_moods"`
+	VibeScores   map[string]float64 `json:"vibe_scores"`
+	MoodVector   []float32          `json:"mood_vector"`
+	AnalyzedAt   time.Time          `json:"analyzed_at"`
 }
 
 // UpsertFeatures inserts or updates the acoustic feature record for a song.
 func (db *DB) UpsertFeatures(ctx context.Context, f *SongFeatures) (uuid.UUID, error) {
+	if f.MatchedMoods == nil {
+		f.MatchedMoods = []string{}
+	}
+	if f.VibeScores == nil {
+		f.VibeScores = make(map[string]float64)
+	}
+
 	vibeJSON, err := json.Marshal(f.VibeScores)
 	if err != nil {
 		return uuid.Nil, fmt.Errorf("marshal vibe scores: %w", err)

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/KAwasthi2889/Moodify/internal/analyzer"
 	"github.com/KAwasthi2889/Moodify/internal/database"
 	"github.com/KAwasthi2889/Moodify/internal/metadata"
 	"github.com/KAwasthi2889/Moodify/internal/storage"
@@ -19,16 +20,18 @@ type Server struct {
 	store       storage.FileStore
 	identifier  *metadata.Identifier
 	embedder    *metadata.Embedder
+	analyzer    *analyzer.Analyzer
 	acoustIDKey string
 }
 
 // New creates a new Server with the given dependencies.
-func New(port int, db *database.DB, store storage.FileStore, identifier *metadata.Identifier, embedder *metadata.Embedder, acoustIDKey string) *Server {
+func New(port int, db *database.DB, store storage.FileStore, identifier *metadata.Identifier, embedder *metadata.Embedder, az *analyzer.Analyzer, acoustIDKey string) *Server {
 	s := &Server{
 		db:          db,
 		store:       store,
 		identifier:  identifier,
 		embedder:    embedder,
+		analyzer:    az,
 		acoustIDKey: acoustIDKey,
 	}
 

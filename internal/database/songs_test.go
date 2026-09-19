@@ -9,6 +9,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+
+	"github.com/KAwasthi2889/Moodify/internal/audio"
 )
 
 func TestFormatAndParseVector(t *testing.T) {
@@ -125,18 +127,20 @@ func TestSongFeaturesIntegration(t *testing.T) {
 	}
 
 	feat := &SongFeatures{
-		SongID:          song.ID,
-		DurationSec:     180.5,
-		TempoBPM:        128.0,
-		Energy:          0.75,
-		Brightness:      2200.0,
-		HarmonicRatio:   0.65,
-		PercussiveRatio: 0.35,
-		BeatImpact:      1.2,
-		DistortionZCR:   0.08,
-		MatchedMoods:    []string{"Euphoric / Uplifting", "Irresistible Groove / Dance"},
+		SongID: song.ID,
+		AcousticFeatures: audio.AcousticFeatures{
+			DurationSec:     180.5,
+			TempoBPM:        128.0,
+			Energy:          0.75,
+			Brightness:      2200.0,
+			HarmonicRatio:   0.65,
+			PercussiveRatio: 0.35,
+			BeatImpact:      1.2,
+			DistortionZCR:   0.08,
+		},
+		MatchedMoods: []string{"Euphoric / Uplifting", "Irresistible Groove / Dance"},
 		VibeScores: map[string]float64{
-			"Euphoric / Uplifting":       0.85,
+			"Euphoric / Uplifting":        0.85,
 			"Irresistible Groove / Dance": 0.80,
 		},
 		MoodVector: vec,

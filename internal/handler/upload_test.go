@@ -70,9 +70,9 @@ func TestExtensionToFormat(t *testing.T) {
 		tt := tt
 		t.Run(tt.ext, func(t *testing.T) {
 			t.Parallel()
-			got := extensionToFormat(tt.ext)
+			got := audio.ExtensionToFormat(tt.ext)
 			if got != tt.expected {
-				t.Errorf("extensionToFormat(%q) = %q, want %q", tt.ext, got, tt.expected)
+				t.Errorf("audio.ExtensionToFormat(%q) = %q, want %q", tt.ext, got, tt.expected)
 			}
 		})
 	}

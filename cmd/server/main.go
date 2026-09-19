@@ -8,6 +8,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/KAwasthi2889/Moodify/internal/analyzer"
 	"github.com/KAwasthi2889/Moodify/internal/config"
 	"github.com/KAwasthi2889/Moodify/internal/database"
 	"github.com/KAwasthi2889/Moodify/internal/logging"
@@ -43,12 +44,13 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Initialize metadata identifier and tag embedder.
+	// Initialize sidecar runners.
 	identifier := metadata.NewIdentifier(cfg.PythonBin, "./python/identify.py")
 	embedder := metadata.NewEmbedder(cfg.PythonBin, "./python/embed_tags.py")
+	az := analyzer.NewAnalyzer(cfg.PythonBin, "./python/analyze.py")
 
 	// Create and start HTTP server.
-	srv := server.New(cfg.ServerPort, db, store, identifier, embedder, cfg.AcoustIDAPIKey)
+	srv := server.New(cfg.ServerPort, db, store, identifier, embedder, az, cfg.AcoustIDAPIKey)
 
 	// Graceful shutdown on SIGINT/SIGTERM.
 	go func() {

@@ -2,7 +2,6 @@ package handler
 
 import (
 	"bytes"
-	"context"
 	"fmt"
 	"io"
 	"log/slog"
@@ -11,24 +10,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
-
+	"github.com/KAwasthi2889/Moodify/internal/audio"
 	"github.com/KAwasthi2889/Moodify/internal/database"
 	"github.com/KAwasthi2889/Moodify/internal/storage"
 )
 
 const maxUploadSize = 50 << 20 // 50 MB
-
-// AudioFormat represents a detected audio file format.
-type AudioFormat string
-
-const (
-	FormatMP3  AudioFormat = "mp3"
-	FormatM4A  AudioFormat = "m4a"
-	FormatFLAC AudioFormat = "flac"
-	FormatWAV  AudioFormat = "wav"
-	FormatOPUS AudioFormat = "opus"
-)
 
 // Upload returns a handler that accepts multipart audio file uploads.
 // It detects the true format via magic bytes, saves the file, and inserts a DB record.
@@ -40,11 +27,11 @@ func Upload(db *database.DB, store storage.FileStore) http.HandlerFunc {
 		file, header, err := r.FormFile("file")
 		if err != nil {
 			if err.Error() == "http: request body too large" {
-				writeError(w, http.StatusRequestEntityTooLarge,
+				respondError(w, http.StatusRequestEntityTooLarge,
 					fmt.Sprintf("file exceeds maximum upload size of %d MB", maxUploadSize>>20))
 				return
 			}
-			writeError(w, http.StatusBadRequest, "missing or invalid 'file' field")
+			respondError(w, http.StatusBadRequest, "missing or invalid 'file' field")
 			return
 		}
 		defer file.Close()
@@ -53,21 +40,22 @@ func Upload(db *database.DB, store storage.FileStore) http.HandlerFunc {
 		headerBytes := make([]byte, 12)
 		n, err := io.ReadFull(file, headerBytes)
 		if err != nil && err != io.ErrUnexpectedEOF {
-			writeError(w, http.StatusBadRequest, "unable to read file header")
+			respondError(w, http.StatusBadRequest, "unable to read file header")
 			return
 		}
 		headerBytes = headerBytes[:n]
 
-		detectedFormat := detectFormat(headerBytes)
+		// Detect true format from magic bytes.
+		detectedFormat := audio.DetectFormat(headerBytes)
 		if detectedFormat == "" {
-			writeError(w, http.StatusUnsupportedMediaType,
-				"unsupported audio format; accepted: mp3, m4a, flac, wav, opus")
+			respondError(w, http.StatusBadRequest,
+				"unsupported audio format: file must be MP3, M4A, FLAC, WAV, or OPUS")
 			return
 		}
 
-		// Check for extension mismatch.
-		ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(header.Filename), "."))
-		extFormat := extensionToFormat(ext)
+		// Check extension vs detected format; log warning if mismatch.
+		ext := strings.TrimPrefix(filepath.Ext(header.Filename), ".")
+		extFormat := extensionToFormat(strings.ToLower(ext))
 		if extFormat != "" && extFormat != detectedFormat {
 			slog.Warn("file extension does not match detected format",
 				"filename", header.Filename,
@@ -76,40 +64,45 @@ func Upload(db *database.DB, store storage.FileStore) http.HandlerFunc {
 			)
 		}
 
-		// Reconstruct a reader with the peeked bytes prepended.
+		// Reset reader by combining read header with remaining stream.
 		fullReader := io.MultiReader(bytes.NewReader(headerBytes), file)
 
-		// Generate a unique filename preserving the correct extension.
+		// Generate storage filename using the detected format extension.
 		storedName := generateFilename(header.Filename, string(detectedFormat))
 
-		// Save to storage.
-		filePath, err := store.Save(r.Context(), storedName, fullReader)
+		// Save file to storage.
+		savedPath, err := store.Save(r.Context(), storedName, fullReader)
 		if err != nil {
-			slog.Error("failed to save file", "error", err)
-			writeError(w, http.StatusInternalServerError, "failed to save file")
+			slog.Error("failed to save file", "error", err, "filename", storedName)
+			respondError(w, http.StatusInternalServerError, "failed to store file")
 			return
 		}
 
-		// Insert record into DB.
-		songID, err := insertSong(r.Context(), db.Pool,
-			storedName, header.Filename, string(detectedFormat), filePath, header.Size)
-		if err != nil {
+		// Insert song record in database.
+		song := &database.Song{
+			Filename:     storedName,
+			OriginalName: header.Filename,
+			Format:       string(detectedFormat),
+			FilePath:     savedPath,
+			SizeBytes:    header.Size,
+			Status:       "uploaded",
+		}
+		if err := db.CreateSong(r.Context(), song); err != nil {
 			slog.Error("failed to insert song record", "error", err)
-			// Attempt to clean up the saved file.
-			_ = store.Delete(r.Context(), filePath)
-			writeError(w, http.StatusInternalServerError, "failed to record upload")
+			_ = store.Delete(r.Context(), storedName)
+			respondError(w, http.StatusInternalServerError, "failed to record upload")
 			return
 		}
 
 		slog.Info("file uploaded",
-			"song_id", songID,
+			"song_id", song.ID,
 			"original_name", header.Filename,
 			"detected_format", detectedFormat,
 			"size_bytes", header.Size,
 		)
 
-		writeJSON(w, http.StatusCreated, map[string]any{
-			"id":              songID,
+		respondJSON(w, http.StatusCreated, map[string]any{
+			"id":              song.ID,
 			"filename":        storedName,
 			"original_name":   header.Filename,
 			"detected_format": detectedFormat,
@@ -119,58 +112,19 @@ func Upload(db *database.DB, store storage.FileStore) http.HandlerFunc {
 	}
 }
 
-// detectFormat identifies the audio format from the first bytes of the file.
-func detectFormat(header []byte) AudioFormat {
-	if len(header) < 3 {
-		return ""
-	}
-
-	// FLAC: starts with "fLaC"
-	if len(header) >= 4 && string(header[:4]) == "fLaC" {
-		return FormatFLAC
-	}
-
-	// WAV: starts with "RIFF" and has "WAVE" at offset 8
-	if len(header) >= 12 && string(header[:4]) == "RIFF" && string(header[8:12]) == "WAVE" {
-		return FormatWAV
-	}
-
-	// OGG/Opus: starts with "OggS"
-	if len(header) >= 4 && string(header[:4]) == "OggS" {
-		return FormatOPUS
-	}
-
-	// M4A/MP4: has "ftyp" at offset 4
-	if len(header) >= 8 && string(header[4:8]) == "ftyp" {
-		return FormatM4A
-	}
-
-	// MP3: ID3v2 tag header
-	if string(header[:3]) == "ID3" {
-		return FormatMP3
-	}
-
-	// MP3: MPEG sync word (0xFF followed by 0xE0 mask)
-	if header[0] == 0xFF && (header[1]&0xE0) == 0xE0 {
-		return FormatMP3
-	}
-
-	return ""
-}
-
-// extensionToFormat maps file extensions to AudioFormat.
-func extensionToFormat(ext string) AudioFormat {
+// extensionToFormat maps file extensions to audio.AudioFormat.
+func extensionToFormat(ext string) audio.AudioFormat {
 	switch ext {
 	case "mp3":
-		return FormatMP3
+		return audio.FormatMP3
 	case "m4a", "aac", "mp4":
-		return FormatM4A
+		return audio.FormatM4A
 	case "flac":
-		return FormatFLAC
+		return audio.FormatFLAC
 	case "wav":
-		return FormatWAV
+		return audio.FormatWAV
 	case "opus", "ogg":
-		return FormatOPUS
+		return audio.FormatOPUS
 	default:
 		return ""
 	}
@@ -197,16 +151,4 @@ func sanitizeFilename(name string) string {
 		name = "UNKNOWN"
 	}
 	return name
-}
-
-func insertSong(ctx context.Context, pool *pgxpool.Pool,
-	filename, originalName, format, filePath string, fileSize int64,
-) (string, error) {
-	var id string
-	err := pool.QueryRow(ctx, `
-		INSERT INTO songs (filename, original_name, format, file_path, file_size, status)
-		VALUES ($1, $2, $3, $4, $5, 'uploaded')
-		RETURNING id
-	`, filename, originalName, format, filePath, fileSize).Scan(&id)
-	return id, err
 }

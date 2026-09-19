@@ -28,69 +28,35 @@ func SaveMetadata(db *database.DB) http.HandlerFunc {
 		idStr := chi.URLParam(r, "id")
 		songID, err := uuid.Parse(idStr)
 		if err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid song id format"})
+			respondError(w, http.StatusBadRequest, "invalid song id format")
 			return
 		}
 
 		// Ensure the song exists
-		var exists bool
-		err = db.Pool.QueryRow(r.Context(),
-			"SELECT EXISTS(SELECT 1 FROM songs WHERE id = $1)",
-			songID,
-		).Scan(&exists)
-		if err != nil {
+		if _, err := db.GetSong(r.Context(), songID); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				respondError(w, http.StatusNotFound, "song not found")
+				return
+			}
 			slog.Error("failed to check song existence", "error", err, "song_id", songID)
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "database query failed"})
-			return
-		}
-		if !exists {
-			writeJSON(w, http.StatusNotFound, map[string]string{"error": "song not found"})
+			respondError(w, http.StatusInternalServerError, "database query failed")
 			return
 		}
 
 		var meta metadata.SongMetadata
 		if err := json.NewDecoder(r.Body).Decode(&meta); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json payload: " + err.Error()})
+			respondError(w, http.StatusBadRequest, "invalid json payload: "+err.Error())
 			return
 		}
 
-		if meta.Source == "" {
-			meta.Source = "user"
-		}
-
-		var metaID uuid.UUID
-		err = db.Pool.QueryRow(r.Context(), `
-			INSERT INTO song_metadata (
-				song_id, source, title, artist, album, album_artist,
-				release_year, genre, track_number, musicbrainz_id,
-				acoustid_score, english_title
-			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-			ON CONFLICT (song_id) DO UPDATE SET
-				source = EXCLUDED.source,
-				title = EXCLUDED.title,
-				artist = EXCLUDED.artist,
-				album = EXCLUDED.album,
-				album_artist = EXCLUDED.album_artist,
-				release_year = EXCLUDED.release_year,
-				genre = EXCLUDED.genre,
-				track_number = EXCLUDED.track_number,
-				musicbrainz_id = EXCLUDED.musicbrainz_id,
-				acoustid_score = EXCLUDED.acoustid_score,
-				english_title = EXCLUDED.english_title
-			RETURNING id
-		`,
-			songID, meta.Source, meta.Title, meta.Artist, meta.Album, meta.AlbumArtist,
-			meta.ReleaseYear, meta.Genre, meta.TrackNumber, meta.MusicbrainzID,
-			meta.AcoustidScore, meta.EnglishTitle,
-		).Scan(&metaID)
-
+		metaID, err := db.UpsertMetadata(r.Context(), songID, &meta)
 		if err != nil {
-			slog.Error("failed to upsert metadata", "error", err, "song_id", songID)
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to save metadata"})
+			slog.Error("failed to save metadata", "error", err, "song_id", songID)
+			respondError(w, http.StatusInternalServerError, "failed to save metadata")
 			return
 		}
 
-		writeJSON(w, http.StatusOK, MetadataResponse{
+		respondJSON(w, http.StatusOK, MetadataResponse{
 			ID:           metaID.String(),
 			SongID:       songID.String(),
 			SongMetadata: meta,
@@ -105,35 +71,25 @@ func GetMetadata(db *database.DB) http.HandlerFunc {
 		idStr := chi.URLParam(r, "id")
 		songID, err := uuid.Parse(idStr)
 		if err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid song id format"})
+			respondError(w, http.StatusBadRequest, "invalid song id format")
 			return
 		}
 
-		var resp MetadataResponse
-		var metaUUID, songUUID uuid.UUID
-		err = db.Pool.QueryRow(r.Context(), `
-			SELECT id, song_id, source, title, artist, album, album_artist,
-			       release_year, genre, track_number, musicbrainz_id,
-			       acoustid_score, english_title
-			FROM song_metadata
-			WHERE song_id = $1
-		`, songID).Scan(
-			&metaUUID, &songUUID, &resp.Source, &resp.Title, &resp.Artist, &resp.Album, &resp.AlbumArtist,
-			&resp.ReleaseYear, &resp.Genre, &resp.TrackNumber, &resp.MusicbrainzID,
-			&resp.AcoustidScore, &resp.EnglishTitle,
-		)
+		meta, metaID, err := db.GetMetadata(r.Context(), songID)
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
-				writeJSON(w, http.StatusNotFound, map[string]string{"error": "metadata not found for this song"})
+				respondError(w, http.StatusNotFound, "metadata not found for this song")
 				return
 			}
 			slog.Error("failed to query song metadata", "error", err, "song_id", songID)
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "database query failed"})
+			respondError(w, http.StatusInternalServerError, "database query failed")
 			return
 		}
 
-		resp.ID = metaUUID.String()
-		resp.SongID = songUUID.String()
-		writeJSON(w, http.StatusOK, resp)
+		respondJSON(w, http.StatusOK, MetadataResponse{
+			ID:           metaID.String(),
+			SongID:       songID.String(),
+			SongMetadata: *meta,
+		})
 	}
 }

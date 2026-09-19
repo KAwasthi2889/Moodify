@@ -2,3 +2,8 @@
 pyacoustid
 musicbrainzngs
 mutagen
+
+# Phase 3: Audio analysis & feature extraction
+numpy
+soundfile
+librosa

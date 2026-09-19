@@ -8,21 +8,26 @@ import (
 	"time"
 
 	"github.com/KAwasthi2889/Moodify/internal/database"
+	"github.com/KAwasthi2889/Moodify/internal/metadata"
 	"github.com/KAwasthi2889/Moodify/internal/storage"
 )
 
 // Server holds the HTTP server and its dependencies.
 type Server struct {
-	httpServer *http.Server
-	db         *database.DB
-	store      storage.FileStore
+	httpServer  *http.Server
+	db          *database.DB
+	store       storage.FileStore
+	identifier  *metadata.Identifier
+	acoustIDKey string
 }
 
 // New creates a new Server with the given dependencies.
-func New(port int, db *database.DB, store storage.FileStore) *Server {
+func New(port int, db *database.DB, store storage.FileStore, identifier *metadata.Identifier, acoustIDKey string) *Server {
 	s := &Server{
-		db:    db,
-		store: store,
+		db:          db,
+		store:       store,
+		identifier:  identifier,
+		acoustIDKey: acoustIDKey,
 	}
 
 	router := s.routes()

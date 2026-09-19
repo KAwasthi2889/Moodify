@@ -27,6 +27,9 @@ func (s *Server) routes() http.Handler {
 
 		// Song endpoints
 		r.Post("/songs/upload", handler.Upload(s.db, s.store))
+		r.Post("/songs/{id}/identify", handler.Identify(s.db, s.identifier, s.acoustIDKey))
+		r.Put("/songs/{id}/metadata", handler.SaveMetadata(s.db))
+		r.Get("/songs/{id}/metadata", handler.GetMetadata(s.db))
 	})
 
 	return r

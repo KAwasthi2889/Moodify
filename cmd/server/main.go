@@ -11,6 +11,7 @@ import (
 	"github.com/KAwasthi2889/Moodify/internal/config"
 	"github.com/KAwasthi2889/Moodify/internal/database"
 	"github.com/KAwasthi2889/Moodify/internal/logging"
+	"github.com/KAwasthi2889/Moodify/internal/metadata"
 	"github.com/KAwasthi2889/Moodify/internal/server"
 	"github.com/KAwasthi2889/Moodify/internal/storage"
 )
@@ -42,8 +43,11 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Initialize metadata identifier.
+	identifier := metadata.NewIdentifier(cfg.PythonBin, "./python/identify.py")
+
 	// Create and start HTTP server.
-	srv := server.New(cfg.ServerPort, db, store)
+	srv := server.New(cfg.ServerPort, db, store, identifier, cfg.AcoustIDAPIKey)
 
 	// Graceful shutdown on SIGINT/SIGTERM.
 	go func() {

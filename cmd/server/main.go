@@ -43,11 +43,12 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Initialize metadata identifier.
+	// Initialize metadata identifier and tag embedder.
 	identifier := metadata.NewIdentifier(cfg.PythonBin, "./python/identify.py")
+	embedder := metadata.NewEmbedder(cfg.PythonBin, "./python/embed_tags.py")
 
 	// Create and start HTTP server.
-	srv := server.New(cfg.ServerPort, db, store, identifier, cfg.AcoustIDAPIKey)
+	srv := server.New(cfg.ServerPort, db, store, identifier, embedder, cfg.AcoustIDAPIKey)
 
 	// Graceful shutdown on SIGINT/SIGTERM.
 	go func() {

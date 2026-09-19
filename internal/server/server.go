@@ -18,15 +18,17 @@ type Server struct {
 	db          *database.DB
 	store       storage.FileStore
 	identifier  *metadata.Identifier
+	embedder    *metadata.Embedder
 	acoustIDKey string
 }
 
 // New creates a new Server with the given dependencies.
-func New(port int, db *database.DB, store storage.FileStore, identifier *metadata.Identifier, acoustIDKey string) *Server {
+func New(port int, db *database.DB, store storage.FileStore, identifier *metadata.Identifier, embedder *metadata.Embedder, acoustIDKey string) *Server {
 	s := &Server{
 		db:          db,
 		store:       store,
 		identifier:  identifier,
+		embedder:    embedder,
 		acoustIDKey: acoustIDKey,
 	}
 

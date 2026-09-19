@@ -111,3 +111,17 @@ func (db *DB) GetMetadata(ctx context.Context, songID uuid.UUID) (*metadata.Song
 	}
 	return &m, metaID, nil
 }
+
+// UpdateSongFile updates the stored filename and path for a song.
+func (db *DB) UpdateSongFile(ctx context.Context, id uuid.UUID, filename, filePath string) error {
+	res, err := db.Pool.Exec(ctx, `
+		UPDATE songs SET filename = $1, file_path = $2 WHERE id = $3
+	`, filename, filePath, id)
+	if err != nil {
+		return fmt.Errorf("update song file %s: %w", id, err)
+	}
+	if res.RowsAffected() == 0 {
+		return fmt.Errorf("song %s not found", id)
+	}
+	return nil
+}

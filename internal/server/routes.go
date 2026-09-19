@@ -30,6 +30,8 @@ func (s *Server) routes() http.Handler {
 		r.Post("/songs/{id}/identify", handler.Identify(s.db, s.identifier, s.acoustIDKey))
 		r.Put("/songs/{id}/metadata", handler.SaveMetadata(s.db))
 		r.Get("/songs/{id}/metadata", handler.GetMetadata(s.db))
+		r.Post("/songs/{id}/embed", handler.EmbedTags(s.db, s.embedder))
+		r.Post("/songs/{id}/rename", handler.RenameSong(s.db, s.store))
 	})
 
 	return r

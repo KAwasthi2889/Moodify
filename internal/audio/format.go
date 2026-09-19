@@ -18,7 +18,7 @@ const (
 // DetectFormat inspects the magic bytes in an audio file header and returns the detected format.
 // It returns an empty AudioFormat if the format cannot be identified.
 func DetectFormat(header []byte) AudioFormat {
-	if len(header) < 3 {
+	if len(header) < 2 {
 		return ""
 	}
 
@@ -43,7 +43,7 @@ func DetectFormat(header []byte) AudioFormat {
 	}
 
 	// 5. MP3 with ID3 tag: starts with "ID3"
-	if bytes.Equal(header[:3], []byte("ID3")) {
+	if len(header) >= 3 && bytes.Equal(header[:3], []byte("ID3")) {
 		return FormatMP3
 	}
 

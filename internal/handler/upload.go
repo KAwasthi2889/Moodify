@@ -154,13 +154,18 @@ func generateFilename(original string, format string) string {
 
 // sanitizeFilename removes or replaces characters unsafe for filesystems.
 func sanitizeFilename(name string) string {
+	// 1. Strip null bytes
+	name = strings.ReplaceAll(name, "\x00", "")
+
+	// 2. Replace directory separators with underscores
 	replacer := strings.NewReplacer(
 		"/", "_",
 		"\\", "_",
-		"\x00", "",
 	)
 	name = replacer.Replace(name)
-	name = strings.Trim(name, ". ")
+
+	// 3. Trim leading and trailing dots, spaces, dashes, and underscores
+	name = strings.Trim(name, "._- ")
 
 	if name == "" {
 		name = "UNKNOWN"

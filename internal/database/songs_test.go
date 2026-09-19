@@ -2,35 +2,88 @@ package database
 
 import (
 	"context"
+	"errors"
 	"os"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 )
 
 func TestFormatAndParseVector(t *testing.T) {
-	original := make([]float32, 36)
-	for i := range original {
-		original[i] = float32(i) * 0.025
-	}
+	t.Parallel()
 
-	formatted := FormatVector(original)
-	parsed, err := ParseVector(formatted)
-	if err != nil {
-		t.Fatalf("ParseVector failed: %v", err)
-	}
-
-	if len(parsed) != len(original) {
-		t.Fatalf("expected length %d, got %d", len(original), len(parsed))
-	}
-
-	for i := range original {
-		diff := parsed[i] - original[i]
-		if diff < -0.0001 || diff > 0.0001 {
-			t.Errorf("dim %d mismatch: expected %f, got %f", i, original[i], parsed[i])
+	t.Run("Standard 36-D roundtrip", func(t *testing.T) {
+		t.Parallel()
+		original := make([]float32, 36)
+		for i := range original {
+			original[i] = float32(i) * 0.025
 		}
-	}
+
+		formatted := FormatVector(original)
+		parsed, err := ParseVector(formatted)
+		if err != nil {
+			t.Fatalf("ParseVector failed: %v", err)
+		}
+
+		if len(parsed) != len(original) {
+			t.Fatalf("expected length %d, got %d", len(original), len(parsed))
+		}
+
+		for i := range original {
+			diff := parsed[i] - original[i]
+			if diff < -0.0001 || diff > 0.0001 {
+				t.Errorf("dim %d mismatch: expected %f, got %f", i, original[i], parsed[i])
+			}
+		}
+	})
+
+	t.Run("Negative numbers and zeros", func(t *testing.T) {
+		t.Parallel()
+		input := []float32{-0.85, 0.0, 0.42, -1.0}
+		formatted := FormatVector(input)
+		parsed, err := ParseVector(formatted)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(parsed) != 4 {
+			t.Fatalf("expected 4 elements, got %d", len(parsed))
+		}
+		if parsed[0] < -0.8501 || parsed[0] > -0.8499 {
+			t.Errorf("expected -0.85, got %f", parsed[0])
+		}
+	})
+
+	t.Run("Empty vector string", func(t *testing.T) {
+		t.Parallel()
+		parsed, err := ParseVector("[]")
+		if err != nil {
+			t.Fatalf("expected nil error, got %v", err)
+		}
+		if len(parsed) != 0 {
+			t.Errorf("expected empty slice, got %v", parsed)
+		}
+	})
+
+	t.Run("Whitespace-padded vector", func(t *testing.T) {
+		t.Parallel()
+		parsed, err := ParseVector("[ 0.1 ,  0.25 , 0.5 ]")
+		if err != nil {
+			t.Fatalf("unexpected error on whitespace-padded vector: %v", err)
+		}
+		if len(parsed) != 3 || parsed[1] != 0.25 {
+			t.Errorf("unexpected parsed result: %v", parsed)
+		}
+	})
+
+	t.Run("Malformed non-numeric vector returns error", func(t *testing.T) {
+		t.Parallel()
+		_, err := ParseVector("[0.1, corrupt_data, 0.5]")
+		if err == nil {
+			t.Fatal("expected error parsing non-numeric vector, got nil")
+		}
+	})
 }
 
 func TestSongFeaturesIntegration(t *testing.T) {
@@ -116,4 +169,41 @@ func TestSongFeaturesIntegration(t *testing.T) {
 	if retrieved.VibeScores["Euphoric / Uplifting"] != 0.85 {
 		t.Errorf("expected vibe score 0.85, got %v", retrieved.VibeScores)
 	}
+
+	// 5. Test Upsert conflict (updating features for same song)
+	feat.TempoBPM = 140.0
+	feat.Energy = 0.90
+	updatedFeatID, err := db.UpsertFeatures(ctx, feat)
+	if err != nil {
+		t.Fatalf("UpsertFeatures on conflict failed: %v", err)
+	}
+	if updatedFeatID != featID {
+		t.Errorf("expected same feature ID %s, got %s", featID, updatedFeatID)
+	}
+
+	reRetrieved, err := db.GetFeatures(ctx, song.ID)
+	if err != nil {
+		t.Fatalf("GetFeatures after update failed: %v", err)
+	}
+	if reRetrieved.TempoBPM != 140.0 {
+		t.Errorf("expected updated tempo 140.0, got %f", reRetrieved.TempoBPM)
+	}
+
+	// 6. Test Foreign Key Cascade: Deleting the song must cascade-delete song_features!
+	_, err = db.Pool.Exec(ctx, "DELETE FROM songs WHERE id = $1", song.ID)
+	if err != nil {
+		t.Fatalf("delete song failed: %v", err)
+	}
+
+	_, err = db.GetFeatures(ctx, song.ID)
+	if err == nil {
+		t.Fatal("expected error after song deletion, got nil")
+	}
+	if !errors.Is(err, pgx.ErrNoRows) && !isNotFound(err) {
+		t.Errorf("expected not found / no rows error, got: %v", err)
+	}
+}
+
+func isNotFound(err error) bool {
+	return err != nil && (errors.Is(err, pgx.ErrNoRows) || errors.Unwrap(err) == pgx.ErrNoRows)
 }

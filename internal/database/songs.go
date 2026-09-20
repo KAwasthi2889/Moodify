@@ -933,5 +933,3 @@ func (db *DB) GetSongsForPlaylist(ctx context.Context, sessionID, mood, genre st
 	}
 	return songs, rows.Err()
 }
-
-

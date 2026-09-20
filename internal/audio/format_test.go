@@ -158,4 +158,3 @@ func TestExtensionToFormat(t *testing.T) {
 		})
 	}
 }
-

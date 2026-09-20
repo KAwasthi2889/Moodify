@@ -15,6 +15,10 @@ build:
 test:
 	go test ./... -v -race
 
+test-e2e:
+	go test ./tests/e2e/... -v
+
+
 # ── Docker ──────────────────────────────────────────
 
 docker-up:

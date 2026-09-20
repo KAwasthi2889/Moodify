@@ -25,10 +25,10 @@ type AnalysisJob struct {
 
 // QueueStats holds real-time queue execution telemetry.
 type QueueStats struct {
-	EnqueuedCount int64 `json:"enqueued_count"`
+	EnqueuedCount  int64 `json:"enqueued_count"`
 	CompletedCount int64 `json:"completed_count"`
-	FailedCount   int64 `json:"failed_count"`
-	ActiveWorkers int64 `json:"active_workers"`
+	FailedCount    int64 `json:"failed_count"`
+	ActiveWorkers  int64 `json:"active_workers"`
 }
 
 // Queue defines the asynchronous workload offloading interface (AWS SQS or local worker pool).

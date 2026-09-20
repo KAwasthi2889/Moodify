@@ -72,4 +72,3 @@ func ExtensionToFormat(ext string) AudioFormat {
 		return ""
 	}
 }
-

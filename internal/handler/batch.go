@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 
@@ -115,14 +116,19 @@ func BatchUpload(db *database.DB, store storage.FileStore, maxFileSizeMB int) ht
 				continue
 			}
 
-			// Calculate actual stored file size
+			// Calculate actual stored file size from disk
+			actualSizeBytes := int64(len(headerBytes))
+			if fi, sErr := os.Stat(savedPath); sErr == nil {
+				actualSizeBytes = fi.Size()
+			}
+
 			song := &database.Song{
 				SessionID:    sessionID,
 				Filename:     storedName,
 				OriginalName: filename,
 				Format:       string(detectedFormat),
 				FilePath:     savedPath,
-				SizeBytes:    int64(len(headerBytes)), // will be verified on disk
+				SizeBytes:    actualSizeBytes,
 				Status:       "uploaded",
 			}
 

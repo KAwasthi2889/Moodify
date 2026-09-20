@@ -1,16 +1,10 @@
 /**
- * Moodify Hybrid API Engine
- * Synthesized from @frontend skill HYBRID-API-ENGINE.
- * Seamlessly transitions between Live Go API and Mock Preview mode with local mutations.
+ * Moodify API Client & Session Manager
+ * Transparently attaches X-Session-ID header to backend requests.
+ * Zero dummy data: strictly performs authentic HTTP requests to the Go backend.
  */
 
-import { initialMockData } from './mockData.js';
-
-// Base API configuration (proxied in vite.config.js)
 const API_BASE_URL = import.meta.env?.VITE_API_URL || '';
-
-// In-memory state store for mock mutations during interactive preview
-export const inMemoryStore = JSON.parse(JSON.stringify(initialMockData));
 
 export const apiState = {
   isLive: false,
@@ -19,7 +13,21 @@ export const apiState = {
 };
 
 /**
- * Subscribes to API status changes (Live vs Mock Preview)
+ * Gets or initializes the client session ID from localStorage
+ */
+export function getSessionId() {
+  let sessionId = localStorage.getItem('moodify_session_id');
+  if (!sessionId) {
+    sessionId = typeof crypto.randomUUID === 'function' 
+      ? crypto.randomUUID() 
+      : 'session-' + Math.random().toString(36).substring(2, 11);
+    localStorage.setItem('moodify_session_id', sessionId);
+  }
+  return sessionId;
+}
+
+/**
+ * Subscribe to API status changes
  */
 export function onApiStatusChange(callback) {
   apiState.statusListeners.push(callback);
@@ -30,18 +38,18 @@ function notifyStatus() {
     try {
       cb(apiState.isLive);
     } catch (e) {
-      console.error(e);
+      console.error('Error in status listener', e);
     }
   });
 }
 
 /**
- * Pings backend health on application bootstrap
+ * Pings backend health
  */
 export async function checkBackendHealth() {
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 2000); // 2s fast timeout
+    const timeoutId = setTimeout(() => controller.abort(), 2000);
 
     const res = await fetch(`${API_BASE_URL}/api/v1/health`, {
       method: 'GET',
@@ -55,88 +63,45 @@ export async function checkBackendHealth() {
   } finally {
     apiState.checked = true;
     notifyStatus();
-    console.log(`[Moodify Hybrid API] Engine running in ${apiState.isLive ? '🟢 LIVE API' : '🟡 PREVIEW MODE (Interactive Mocks)'}`);
   }
 }
 
 /**
- * Universal hybrid request executor
- * @param {string} endpoint - API path e.g. '/api/v1/songs'
- * @param {Object} options - Fetch options
- * @param {string} mockCollectionKey - Key in inMemoryStore
- * @param {Function} mockCustomHandler - Optional custom handler for specific endpoints
+ * Clean HTTP fetch wrapper passing session headers
  */
-export async function hybridRequest(endpoint, options = {}, mockCollectionKey, mockCustomHandler) {
-  if (apiState.isLive) {
-    try {
-      const res = await fetch(`${API_BASE_URL}${endpoint}`, {
-        headers: {
-          'Content-Type': 'application/json',
-          ...(options.headers || {})
-        },
-        ...options
-      });
-      if (res.ok) {
-        return await res.json();
-      }
-      console.warn(`[Hybrid API] Live endpoint ${endpoint} returned ${res.status}. Falling back to mock engine.`);
-    } catch (err) {
-      console.warn(`[Hybrid API] Live endpoint ${endpoint} failed: ${err.message}. Falling back to mock engine.`);
-    }
+export async function apiFetch(endpoint, options = {}) {
+  const sessionId = getSessionId();
+  const headers = {
+    'X-Session-ID': sessionId,
+    ...(options.headers || {})
+  };
+
+  if (!(options.body instanceof FormData) && !headers['Content-Type']) {
+    headers['Content-Type'] = 'application/json';
   }
 
-  // Mock Engine Fallback
-  if (mockCustomHandler) {
-    return mockCustomHandler(options.method || 'GET', options.body);
+  const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+    ...options,
+    headers
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text().catch(() => response.statusText);
+    let errorMessage = `HTTP ${response.status}: ${errorText}`;
+    if (errorText.includes('ECONNREFUSED') || errorText.includes('Proxy error')) {
+      errorMessage = 'Backend server is offline (connection refused at http://localhost:8080). Please ensure the Go server is running.';
+    } else {
+      try {
+        const parsed = JSON.parse(errorText);
+        if (parsed.error) errorMessage = parsed.error;
+      } catch (_) {}
+    }
+    throw new Error(errorMessage);
   }
 
-  return handleMockCollectionMutation(options.method || 'GET', mockCollectionKey, options.body);
-}
-
-function handleMockCollectionMutation(method, key, body) {
-  if (!key || !inMemoryStore[key]) {
-    return { status: 'ok', success: true };
+  const contentType = response.headers.get('content-type') || '';
+  if (contentType.includes('application/json')) {
+    return await response.json();
   }
-
-  let parsed = null;
-  if (body) {
-    try {
-      parsed = typeof body === 'string' ? JSON.parse(body) : body;
-    } catch (e) {
-      parsed = body;
-    }
-  }
-
-  switch (method.toUpperCase()) {
-    case 'GET':
-      return { status: 'ok', songs: inMemoryStore[key], total: inMemoryStore[key].length };
-
-    case 'POST': {
-      const newItem = {
-        id: `mock-${Date.now()}`,
-        status: 'analyzed',
-        created_at: new Date().toISOString(),
-        ...parsed
-      };
-      inMemoryStore[key] = [newItem, ...inMemoryStore[key]];
-      return { status: 'ok', song: newItem };
-    }
-
-    case 'PUT': {
-      if (parsed?.id) {
-        inMemoryStore[key] = inMemoryStore[key].map(item => item.id === parsed.id ? { ...item, ...parsed } : item);
-      }
-      return { status: 'ok', updated: true };
-    }
-
-    case 'DELETE': {
-      if (parsed?.id) {
-        inMemoryStore[key] = inMemoryStore[key].filter(item => item.id !== parsed.id);
-      }
-      return { status: 'ok', deleted: true };
-    }
-
-    default:
-      return { status: 'ok', data: inMemoryStore[key] };
-  }
+  return response;
 }

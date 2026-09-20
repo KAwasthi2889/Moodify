@@ -125,7 +125,7 @@ func TestSyncLyrics_Integration(t *testing.T) {
 	}
 
 	var syncResp struct {
-		Status string                `json:"status"`
+		Status string               `json:"status"`
 		Lyrics *database.SongLyrics `json:"lyrics"`
 	}
 	if err := json.Unmarshal(syncRec.Body.Bytes(), &syncResp); err != nil {
@@ -152,7 +152,7 @@ func TestSyncLyrics_Integration(t *testing.T) {
 	}
 
 	var getResp struct {
-		Status string                `json:"status"`
+		Status string               `json:"status"`
 		Lyrics *database.SongLyrics `json:"lyrics"`
 	}
 	if err := json.Unmarshal(getRec.Body.Bytes(), &getResp); err != nil {

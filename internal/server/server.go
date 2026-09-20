@@ -75,4 +75,3 @@ func (s *Server) Shutdown(ctx context.Context) error {
 func (s *Server) Handler() http.Handler {
 	return s.httpServer.Handler
 }
-

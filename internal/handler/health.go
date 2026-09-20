@@ -23,4 +23,3 @@ func Health(db *database.DB) http.HandlerFunc {
 		})
 	}
 }
-

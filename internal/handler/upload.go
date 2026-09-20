@@ -146,7 +146,6 @@ func Upload(db *database.DB, store storage.FileStore) http.HandlerFunc {
 	}
 }
 
-
 // generateFilename creates a unique storage filename with the correct extension.
 func generateFilename(original string, format string) string {
 	base := strings.TrimSuffix(original, filepath.Ext(original))

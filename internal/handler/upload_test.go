@@ -246,4 +246,3 @@ func TestUploadHandler(t *testing.T) {
 		}
 	})
 }
-

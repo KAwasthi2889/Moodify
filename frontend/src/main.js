@@ -1,7 +1,6 @@
 /**
- * Moodify Main Application Bootstrap
- * Orchestrates Three.js kinetic scene, Hybrid API Engine, navigation tabs,
- * and modular bento components.
+ * Moodify Main Application Bootstrap & Client Router
+ * Switches smoothly between the Commercial Landing Showcase and the Moodify Workshop.
  */
 
 import './styles/tokens.css';
@@ -9,106 +8,85 @@ import './styles/base.css';
 import './styles/components.css';
 
 import { initScene } from './scene3d/scene.js';
-import { checkBackendHealth, onApiStatusChange } from './api/client.js';
-import { MoodifyAPI } from './api/endpoints.js';
-import { renderStatusBadge } from './components/StatusBadge.js';
+import { checkBackendHealth } from './api/client.js';
 import { initAudioPlayer } from './components/AudioPlayer.js';
-import { initTrackStudioModal } from './components/TrackStudioModal.js';
-import { renderLibraryTable } from './components/LibraryTable.js';
-import { renderMoodGalaxy } from './components/MoodGalaxy.js';
-import { renderPlaylistStudio } from './components/PlaylistStudio.js';
-import { renderBatchStation } from './components/BatchStation.js';
+import { initSessionDrawer, openSessionDrawer } from './components/SessionDrawer.js';
+import { renderLandingPage } from './components/LandingPage.js';
+import { renderWorkshopPage } from './components/WorkshopPage.js';
 
-let appState = {
-  currentTab: 'library',
-  songs: [],
-  selectedMoodFilter: 'all'
-};
+let currentView = 'landing';
 
-async function initApp() {
-  // 1. Initialize Background 3D Procedural Canvas
-  const canvas = document.getElementById('webgl-canvas');
-  initScene(canvas);
-
-  // 2. Initialize Floating Audio Player & Track Studio Modal
-  initAudioPlayer();
-  initTrackStudioModal();
-
-  // 3. Render Status Badge in Header
-  const badgeContainer = document.getElementById('header-badge-wrap');
-  renderStatusBadge(badgeContainer);
-
-  // 4. Bind Navigation Tabs
-  setupNavigation();
-
-  // 5. Check Backend Connectivity
-  await checkBackendHealth();
-
-  // 6. Load Initial Data
-  await loadSongs();
-
-  // Re-fetch data if backend comes online/offline
-  onApiStatusChange(() => {
-    loadSongs();
-  });
-}
-
-async function loadSongs() {
-  try {
-    const res = await MoodifyAPI.listSongs();
-    appState.songs = res.songs || [];
-    renderActiveTab();
-  } catch (err) {
-    console.error('Failed to load songs', err);
-  }
-}
-
-function setupNavigation() {
-  const tabs = document.querySelectorAll('.nav-tabs .tab-btn');
-  tabs.forEach(btn => {
-    btn.addEventListener('click', () => {
-      tabs.forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      appState.currentTab = btn.dataset.tab;
-      renderActiveTab();
-    });
-  });
-}
-
-function renderActiveTab() {
+export function navigateTo(viewName) {
+  currentView = viewName;
   const viewContainer = document.getElementById('tab-view-container');
   if (!viewContainer) return;
 
-  switch (appState.currentTab) {
-    case 'library':
-      renderLibraryTable(viewContainer, appState.songs, () => loadSongs());
-      break;
+  window.scrollTo({ top: 0, behavior: 'smooth' });
 
-    case 'galaxy':
-      renderMoodGalaxy(viewContainer, appState.songs, (mood) => {
-        // Switch to library tab and filter
-        const libBtn = document.querySelector('[data-tab="library"]');
-        if (libBtn) libBtn.click();
-        const dropdown = document.querySelector('#mood-filter-dropdown');
-        if (dropdown) {
-          dropdown.value = mood;
-          dropdown.dispatchEvent(new Event('change'));
-        }
-      });
-      break;
-
-    case 'playlists':
-      renderPlaylistStudio(viewContainer, appState.songs);
-      break;
-
-    case 'batch':
-      renderBatchStation(viewContainer, () => loadSongs());
-      break;
-
-    default:
-      renderLibraryTable(viewContainer, appState.songs, () => loadSongs());
+  if (viewName === 'workshop') {
+    renderWorkshopPage(viewContainer, navigateTo);
+  } else {
+    renderLandingPage(viewContainer, navigateTo);
   }
 }
 
-// Bootstrap once DOM is ready
+async function initApp() {
+  // 1. Initialize Background 3D Procedural Soundwave Canvas
+  const canvas = document.getElementById('webgl-canvas');
+  initScene(canvas);
+
+  // 2. Initialize Docked Audio Player
+  initAudioPlayer();
+
+  // 3. Initialize Session Drawer
+  const drawerMount = document.getElementById('session-drawer-mount');
+  initSessionDrawer(drawerMount);
+
+  // 4. Check Backend Connectivity
+  await checkBackendHealth();
+
+  // 5. Setup Hamburger Menu Drawer Event
+  const hamburgerBtn = document.getElementById('btn-open-session-drawer');
+  hamburgerBtn?.addEventListener('click', () => {
+    openSessionDrawer();
+  });
+
+  // 6. Header navigation interactions
+  const brandEl = document.getElementById('header-brand');
+  brandEl?.addEventListener('click', () => {
+    navigateTo('landing');
+  });
+
+  const workshopNavBtn = document.getElementById('nav-btn-workshop');
+  workshopNavBtn?.addEventListener('click', () => {
+    navigateTo('workshop');
+  });
+
+  const pipelineLink = document.getElementById('nav-link-pipeline');
+  pipelineLink?.addEventListener('click', (e) => {
+    if (currentView !== 'landing') {
+      e.preventDefault();
+      navigateTo('landing');
+      setTimeout(() => {
+        document.getElementById('architecture')?.scrollIntoView({ behavior: 'smooth' });
+      }, 100);
+    }
+  });
+
+  const hyperspaceLink = document.getElementById('nav-link-hyperspace');
+  hyperspaceLink?.addEventListener('click', (e) => {
+    if (currentView !== 'landing') {
+      e.preventDefault();
+      navigateTo('landing');
+      setTimeout(() => {
+        document.getElementById('hyperspace')?.scrollIntoView({ behavior: 'smooth' });
+      }, 100);
+    }
+  });
+
+  // 7. Initial View Render (Landing)
+  navigateTo('landing');
+}
+
+// Bootstrap once DOM is loaded
 document.addEventListener('DOMContentLoaded', initApp);

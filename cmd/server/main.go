@@ -57,7 +57,7 @@ func main() {
 	// Initialize background worker pool and AWS SQS offloading queue.
 	workerCtx, cancelWorker := context.WithCancel(context.Background())
 	defer cancelWorker()
-	workerPool := queue.NewWorkerPoolQueue(db, az, 2, 256)
+	workerPool := queue.NewWorkerPoolQueue(db, az, 4, 256)
 	workerPool.Start(workerCtx)
 	asyncQueue := queue.NewSQSQueue(cfg.SQSQueueURL, workerPool)
 

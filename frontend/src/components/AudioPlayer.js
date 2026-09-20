@@ -1,393 +1,284 @@
 /**
- * Moodify Floating Audio Player Component
- * Robust HTML5 audio streaming with Web Audio synthesizer fallback,
- * animated spectrum visualizer, playlist queue, and 3D kinetic linking.
+ * Moodify Persistent Docked Audio Player & Dynamic Aura Broadcaster
+ * Synthesized from @frontend skill & FRONTEND_INTEGRATION_GUIDE.md.
+ * Modulates background aura and kinetic Three.js wave physics.
  */
 
 import { setPlaybackKinetics } from '../scene3d/scene.js';
 import { MoodifyAPI } from '../api/endpoints.js';
-import { showToast } from './Toast.js';
 
 let audioElement = null;
-let currentSong = null;
-let playlistQueue = [];
-let currentIndex = -1;
+let currentTrack = null;
 let isPlaying = false;
-let isDraggingSeeker = false;
+let playerContainer = null;
+let timeUpdateListeners = [];
 
-// Web Audio API Synthesizer fallback for mock/missing tracks
-let audioCtx = null;
-let synthInterval = null;
-let synthGain = null;
-let synthTime = 0;
-let isUsingSynth = false;
+const MOOD_AURA_MAP = {
+  'joy & optimism': {
+    color: 'rgba(245, 158, 11, 0.22)',
+    glow: 'rgba(245, 158, 11, 0.45)',
+    border: '#f59e0b'
+  },
+  'desire & love': {
+    color: 'rgba(244, 63, 94, 0.22)',
+    glow: 'rgba(244, 63, 94, 0.45)',
+    border: '#f43f5e'
+  },
+  'sadness & grief': {
+    color: 'rgba(99, 102, 241, 0.22)',
+    glow: 'rgba(56, 189, 248, 0.45)',
+    border: '#6366f1'
+  },
+  'anger & annoyance': {
+    color: 'rgba(239, 68, 68, 0.25)',
+    glow: 'rgba(239, 68, 68, 0.50)',
+    border: '#ef4444'
+  },
+  'calm & neutral': {
+    color: 'rgba(16, 185, 129, 0.22)',
+    glow: 'rgba(6, 182, 212, 0.45)',
+    border: '#10b981'
+  }
+};
 
+/**
+ * Initializes the audio player in the persistent player container
+ */
 export function initAudioPlayer() {
+  playerContainer = document.getElementById('persistent-player-container');
+  if (!playerContainer) return;
+
   audioElement = new Audio();
   audioElement.preload = 'metadata';
 
-  // Native HTML5 Audio Event Listeners
-  audioElement.addEventListener('loadedmetadata', () => {
-    isUsingSynth = false;
-    stopSynth();
-    updateTimeline();
-  });
-
-  audioElement.addEventListener('timeupdate', () => {
-    if (!isUsingSynth && !isDraggingSeeker) {
-      updateTimeline();
-    }
-  });
-
-  audioElement.addEventListener('play', () => {
-    setPlayingState(true);
-  });
-
-  audioElement.addEventListener('pause', () => {
-    setPlayingState(false);
-  });
-
+  // Attach audio events
+  audioElement.addEventListener('timeupdate', handleTimeUpdate);
   audioElement.addEventListener('ended', () => {
-    playNextTrack();
+    isPlaying = false;
+    updatePlayState(false);
   });
-
-  audioElement.addEventListener('error', () => {
-    console.warn('[Moodify Audio] Physical audio stream unavailable or failed. Engaging Web Audio synthesizer preview.');
-    startSynthFallback();
+  audioElement.addEventListener('play', () => {
+    isPlaying = true;
+    updatePlayState(true);
   });
-
-  renderPlayerDOM();
-}
-
-function renderPlayerDOM() {
-  const playerBar = document.createElement('div');
-  playerBar.className = 'audio-player-bar';
-  playerBar.id = 'moodify-player';
-
-  playerBar.innerHTML = `
-    <!-- Left: Track Metadata -->
-    <div class="player-track-info">
-      <div class="player-art-placeholder" id="player-art">
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>
-        </svg>
-      </div>
-      <div class="track-info">
-        <span class="track-title" id="player-title">Select a track to play</span>
-        <span class="track-artist" id="player-artist">Moodify Audio Engine</span>
-      </div>
-    </div>
-
-    <!-- Center: Playback Controls & Timeline -->
-    <div class="player-center-controls">
-      <div class="player-buttons">
-        <button class="player-ctrl-btn" id="player-prev-btn" title="Previous Track">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><polygon points="19 20 9 12 19 4 19 20"/><line x1="5" y1="19" x2="5" y2="5" stroke="currentColor" stroke-width="2"/></svg>
-        </button>
-        <button class="player-ctrl-btn play-master" id="player-toggle-btn" title="Play / Pause">
-          <svg id="play-icon" width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-          <svg id="pause-icon" style="display:none;" width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
-        </button>
-        <button class="player-ctrl-btn" id="player-next-btn" title="Next Track">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 4 15 12 5 20 5 4"/><line x1="19" y1="5" x2="19" y2="19" stroke="currentColor" stroke-width="2"/></svg>
-        </button>
-      </div>
-
-      <div class="player-timeline-wrapper">
-        <span class="mono-num" id="player-time-current" style="font-size:11px; color:var(--color-text-muted);">0:00</span>
-        <input type="range" class="timeline-slider" id="player-seek" min="0" max="100" value="0" />
-        <span class="mono-num" id="player-time-total" style="font-size:11px; color:var(--color-text-muted);">0:00</span>
-      </div>
-    </div>
-
-    <!-- Right: Kinetic Waveform Spectrum & Volume -->
-    <div class="player-wave-container" style="display:flex; align-items:center; justify-content:flex-end; gap:16px;">
-      <div class="waveform-bars" id="visualizer-bars">
-        <div class="wave-bar"></div>
-        <div class="wave-bar"></div>
-        <div class="wave-bar"></div>
-        <div class="wave-bar"></div>
-        <div class="wave-bar"></div>
-        <div class="wave-bar"></div>
-        <div class="wave-bar"></div>
-        <div class="wave-bar"></div>
-      </div>
-      <div style="display:flex; align-items:center; gap:8px;">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--color-text-muted);">
-          <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"/>
-        </svg>
-        <input type="range" class="timeline-slider" id="player-volume" min="0" max="1" step="0.05" value="0.85" style="width:70px;" />
-      </div>
-    </div>
-  `;
-
-  document.body.appendChild(playerBar);
-
-  // Bind Master Controls
-  document.getElementById('player-toggle-btn').addEventListener('click', togglePlay);
-  document.getElementById('player-prev-btn').addEventListener('click', playPreviousTrack);
-  document.getElementById('player-next-btn').addEventListener('click', playNextTrack);
-
-  // Bind Seeker Events (smooth drag without jitter)
-  const seekSlider = document.getElementById('player-seek');
-  seekSlider.addEventListener('mousedown', () => { isDraggingSeeker = true; });
-  seekSlider.addEventListener('touchstart', () => { isDraggingSeeker = true; }, { passive: true });
-
-  seekSlider.addEventListener('input', (e) => {
-    const dur = getActiveDuration();
-    const targetSec = (e.target.value / 100) * dur;
-    document.getElementById('player-time-current').textContent = formatTime(targetSec);
-  });
-
-  seekSlider.addEventListener('change', (e) => {
-    const dur = getActiveDuration();
-    const targetSec = (e.target.value / 100) * dur;
-    if (isUsingSynth) {
-      synthTime = targetSec;
-    } else if (audioElement && audioElement.duration) {
-      audioElement.currentTime = targetSec;
-    }
-    isDraggingSeeker = false;
-  });
-
-  // Bind Volume Slider
-  const volSlider = document.getElementById('player-volume');
-  volSlider.addEventListener('input', (e) => {
-    const val = parseFloat(e.target.value);
-    if (audioElement) audioElement.volume = val;
-    if (synthGain) synthGain.gain.setValueAtTime(val * 0.15, audioCtx?.currentTime || 0);
+  audioElement.addEventListener('pause', () => {
+    isPlaying = false;
+    updatePlayState(false);
   });
 }
 
 /**
- * Initiates playback for a given track and updates playlist queue context.
- * @param {Object} song - Track object
- * @param {Array} queue - Optional list of songs for next/prev sequencing
+ * Subscribes to audio time updates
  */
-export function playTrack(song, queue = null) {
-  if (!song) return;
-  currentSong = song;
+export function onAudioTimeUpdate(callback) {
+  timeUpdateListeners.push(callback);
+}
 
-  if (queue && Array.isArray(queue) && queue.length > 0) {
-    playlistQueue = queue;
-    currentIndex = playlistQueue.findIndex(s => s.id === song.id);
-  } else if (!playlistQueue.some(s => s.id === song.id)) {
-    playlistQueue.push(song);
-    currentIndex = playlistQueue.length - 1;
+export function getCurrentPlayback() {
+  return {
+    track: currentTrack,
+    currentTime: audioElement?.currentTime || 0,
+    duration: audioElement?.duration || 0,
+    isPlaying
+  };
+}
+
+function handleTimeUpdate() {
+  if (!audioElement) return;
+  const current = audioElement.currentTime;
+  const duration = audioElement.duration || 1;
+
+  // Update progress bar
+  const progressFill = playerContainer?.querySelector('#player-progress-fill');
+  const timeCurrentEl = playerContainer?.querySelector('#player-time-current');
+
+  if (progressFill) {
+    const percent = Math.min(100, (current / duration) * 100);
+    progressFill.style.width = `${percent}%`;
+  }
+
+  if (timeCurrentEl) {
+    timeCurrentEl.textContent = formatTime(current);
+  }
+
+  timeUpdateListeners.forEach(cb => {
+    try {
+      cb(current, duration);
+    } catch (e) {
+      console.error(e);
+    }
+  });
+}
+
+function updatePlayState(playing) {
+  if (!playerContainer) return;
+  const playBtn = playerContainer.querySelector('#btn-player-playpause');
+  if (playBtn) {
+    playBtn.innerHTML = playing
+      ? `<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg>`
+      : `<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><polygon points="6 3 20 12 6 21 6 3"/></svg>`;
+  }
+
+  // Modulate 3D kinetic canvas & dynamic background aura
+  if (currentTrack) {
+    setPlaybackKinetics(playing, currentTrack.tempo || 120, currentTrack.dominant_mood || '');
+    updateAuraTheme(playing ? currentTrack.dominant_mood : '');
+  }
+
+  const eq = playerContainer.querySelector('.eq-bars');
+  if (eq) {
+    eq.classList.toggle('active', playing);
+  }
+}
+
+function updateAuraTheme(dominantMood) {
+  const root = document.documentElement;
+  const aura = MOOD_AURA_MAP[dominantMood] || {
+    color: 'rgba(0, 240, 255, 0.16)',
+    glow: 'rgba(0, 240, 255, 0.35)',
+    border: 'rgba(0, 240, 255, 0.6)'
+  };
+
+  root.style.setProperty('--current-aura-color', aura.color);
+  root.style.setProperty('--current-aura-glow', aura.glow);
+
+  const playerBar = playerContainer?.querySelector('.docked-player');
+  if (playerBar) {
+    playerBar.style.boxShadow = `0 16px 40px -6px rgba(0, 0, 0, 0.8), 0 0 28px ${aura.glow}`;
+    playerBar.style.borderColor = aura.border;
+  }
+}
+
+/**
+ * Plays a specified song track
+ * @param {Object} track - Song entity
+ */
+export function playTrack(track) {
+  if (!track) return;
+  currentTrack = track;
+
+  const streamUrl = MoodifyAPI.getAudioStreamUrl(track.id);
+  audioElement.src = streamUrl;
+
+  renderActivePlayer(track);
+
+  audioElement.play().catch(e => {
+    console.warn('Playback error or offline stream:', e);
+    isPlaying = false;
+    updatePlayState(false);
+  });
+}
+
+export function togglePlayPause() {
+  if (!audioElement || !currentTrack) return;
+  if (audioElement.paused) {
+    audioElement.play().catch(e => console.warn(e));
   } else {
-    currentIndex = playlistQueue.findIndex(s => s.id === song.id);
-  }
-
-  // Update DOM labels
-  document.getElementById('player-title').textContent = song.title || song.original_name || 'Untitled Track';
-  document.getElementById('player-artist').textContent = song.artist || song.inferred_genre || 'Audio File';
-
-  // Stop any active synth
-  stopSynth();
-  isUsingSynth = false;
-
-  // Reset Seeker
-  document.getElementById('player-seek').value = 0;
-  document.getElementById('player-time-current').textContent = '0:00';
-  document.getElementById('player-time-total').textContent = formatTime(song.duration_sec || 180);
-
-  // Check if song is an in-memory mock or real server song
-  const isMockId = String(song.id).startsWith('mock-') || String(song.id).startsWith('song-');
-
-  if (isMockId) {
-    startSynthFallback();
-    showToast(`Playing preview: ${song.title || song.original_name}`, 'success');
-    return;
-  }
-
-  // Load Real Stream from Backend
-  const downloadUrl = MoodifyAPI.getDownloadUrl(song.id);
-  audioElement.src = downloadUrl;
-
-  const playPromise = audioElement.play();
-  if (playPromise !== undefined) {
-    playPromise
-      .then(() => {
-        setPlayingState(true);
-        showToast(`Streaming: ${song.title || song.original_name}`, 'success');
-      })
-      .catch((err) => {
-        console.warn('[Moodify Audio] Autoplay policy or media source error:', err);
-        // If real audio format cannot decode or stream errors, fallback to harmonic synthesizer
-        startSynthFallback();
-      });
+    audioElement.pause();
   }
 }
 
-export function togglePlay() {
-  if (!currentSong && playlistQueue.length > 0) {
-    playTrack(playlistQueue[0]);
-    return;
-  }
-  if (!currentSong) return;
+function renderActivePlayer(track) {
+  const mood = track.dominant_mood || 'calm & neutral';
+  const duration = track.duration_sec || 180;
 
-  if (isPlaying) {
-    if (isUsingSynth) {
-      pauseSynth();
-    } else {
-      audioElement.pause();
-    }
-    setPlayingState(false);
-  } else {
-    if (isUsingSynth) {
-      resumeSynth();
-    } else {
-      audioElement.play().catch(() => startSynthFallback());
-    }
-    setPlayingState(true);
-  }
+  playerContainer.innerHTML = `
+    <div class="docked-player active">
+      <!-- Scrubbing Timeline -->
+      <div class="player-progress-bar" id="player-progress-bar">
+        <div class="player-progress-track">
+          <div class="player-progress-fill" id="player-progress-fill" style="width:0%;"></div>
+        </div>
+      </div>
+
+      <div class="player-content">
+        <!-- Left: Track Metadata -->
+        <div class="player-left">
+          <div class="player-artwork">
+            <div class="eq-bars active">
+              <span></span><span></span><span></span><span></span>
+            </div>
+          </div>
+          <div class="player-meta">
+            <div class="player-title" title="${escapeHtml(track.title || track.filename)}">${escapeHtml(track.title || track.filename)}</div>
+            <div class="player-artist-row">
+              <span class="player-artist">${escapeHtml(track.artist || 'Session Track')}</span>
+              <span class="badge-format">${(track.format || 'mp3').toUpperCase()}</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Center: Playback Controls -->
+        <div class="player-center">
+          <div class="controls-row">
+            <button class="btn-ctrl" id="btn-player-rw" title="Rewind 10s">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 19 2 12 11 5 11 19"/><polygon points="22 19 13 12 22 5 22 19"/></svg>
+            </button>
+            <button class="btn-ctrl-play" id="btn-player-playpause" title="Play/Pause">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg>
+            </button>
+            <button class="btn-ctrl" id="btn-player-ff" title="Forward 10s">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 19 22 12 13 5 13 19"/><polygon points="2 19 11 12 2 5 2 19"/></svg>
+            </button>
+          </div>
+          <div class="time-row">
+            <span class="time-label mono-num" id="player-time-current">00:00</span>
+            <span class="time-sep">/</span>
+            <span class="time-label mono-num" id="player-time-total">${formatTime(duration)}</span>
+          </div>
+        </div>
+
+        <!-- Right: Volume & Download -->
+        <div class="player-right">
+          <div class="volume-slider-wrapper" title="Volume">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/>
+            </svg>
+            <input type="range" class="volume-slider" id="player-volume" min="0" max="1" step="0.05" value="0.85" />
+          </div>
+
+          <a href="${MoodifyAPI.getAudioStreamUrl(track.id, true)}" class="btn-player-action icon-only" title="Download Audio File" download>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+            </svg>
+          </a>
+        </div>
+      </div>
+    </div>
+  `;
+
+  // Attach listeners
+  playerContainer.querySelector('#btn-player-playpause')?.addEventListener('click', togglePlayPause);
+  playerContainer.querySelector('#btn-player-rw')?.addEventListener('click', () => {
+    if (audioElement) audioElement.currentTime = Math.max(0, audioElement.currentTime - 10);
+  });
+  playerContainer.querySelector('#btn-player-ff')?.addEventListener('click', () => {
+    if (audioElement) audioElement.currentTime = Math.min(audioElement.duration || 0, audioElement.currentTime + 10);
+  });
+
+  const progressTrack = playerContainer.querySelector('#player-progress-bar');
+  progressTrack?.addEventListener('click', (e) => {
+    if (!audioElement || !audioElement.duration) return;
+    const rect = progressTrack.getBoundingClientRect();
+    const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    audioElement.currentTime = ratio * audioElement.duration;
+  });
+
+  playerContainer.querySelector('#player-volume')?.addEventListener('input', (e) => {
+    if (audioElement) audioElement.volume = parseFloat(e.target.value);
+  });
+
+  updateAuraTheme(mood);
 }
 
-export function playNextTrack() {
-  if (playlistQueue.length === 0) return;
-  currentIndex = (currentIndex + 1) % playlistQueue.length;
-  playTrack(playlistQueue[currentIndex], playlistQueue);
+function formatTime(seconds) {
+  if (isNaN(seconds) || seconds < 0) return '00:00';
+  const mins = Math.floor(seconds / 60);
+  const secs = Math.floor(seconds % 60);
+  return `${mins < 10 ? '0' : ''}${mins}:${secs < 10 ? '0' : ''}${secs}`;
 }
 
-export function playPreviousTrack() {
-  if (playlistQueue.length === 0) return;
-  currentIndex = (currentIndex - 1 + playlistQueue.length) % playlistQueue.length;
-  playTrack(playlistQueue[currentIndex], playlistQueue);
-}
-
-function setPlayingState(playing) {
-  isPlaying = playing;
-  const playIcon = document.getElementById('play-icon');
-  const pauseIcon = document.getElementById('pause-icon');
-  const bars = document.querySelectorAll('#visualizer-bars .wave-bar');
-
-  if (playing) {
-    if (playIcon) playIcon.style.display = 'none';
-    if (pauseIcon) pauseIcon.style.display = 'block';
-    bars.forEach((b, i) => {
-      b.classList.add('animated');
-      b.style.animationDelay = `${(i * 0.12).toFixed(2)}s`;
-    });
-    setPlaybackKinetics(true, currentSong?.tempo_bpm || 120);
-  } else {
-    if (playIcon) playIcon.style.display = 'block';
-    if (pauseIcon) pauseIcon.style.display = 'none';
-    bars.forEach(b => b.classList.remove('animated'));
-    setPlaybackKinetics(false);
-  }
-}
-
-function getActiveDuration() {
-  if (isUsingSynth) {
-    return currentSong?.duration_sec || 180;
-  }
-  if (audioElement && audioElement.duration && !isNaN(audioElement.duration) && isFinite(audioElement.duration)) {
-    return audioElement.duration;
-  }
-  return currentSong?.duration_sec || 180;
-}
-
-function updateTimeline() {
-  const dur = getActiveDuration();
-  const cur = isUsingSynth ? synthTime : (audioElement?.currentTime || 0);
-
-  const currentSpan = document.getElementById('player-time-current');
-  const totalSpan = document.getElementById('player-time-total');
-  const seek = document.getElementById('player-seek');
-
-  if (currentSpan) currentSpan.textContent = formatTime(cur);
-  if (totalSpan) totalSpan.textContent = formatTime(dur);
-  if (seek && dur > 0 && !isDraggingSeeker) {
-    seek.value = Math.min(100, (cur / dur) * 100);
-  }
-}
-
-function formatTime(secs) {
-  if (!secs || isNaN(secs)) return '0:00';
-  const m = Math.floor(secs / 60);
-  const s = Math.floor(secs % 60);
-  return `${m}:${s < 10 ? '0' : ''}${s}`;
-}
-
-// ── Web Audio Synthesizer Fallback Engine ──────────────────────────
-
-function ensureAudioContext() {
-  if (!audioCtx) {
-    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-    if (AudioContextClass) {
-      audioCtx = new AudioContextClass();
-    }
-  }
-  if (audioCtx && audioCtx.state === 'suspended') {
-    audioCtx.resume();
-  }
-}
-
-function startSynthFallback() {
-  isUsingSynth = true;
-  synthTime = 0;
-  ensureAudioContext();
-  setPlayingState(true);
-  resumeSynth();
-}
-
-function resumeSynth() {
-  ensureAudioContext();
-  clearInterval(synthInterval);
-
-  // Chord notes for harmonic generative ambient pad
-  const chordNotes = [220.0, 277.18, 329.63, 440.0, 554.37, 659.25]; // A major / C#m ambience
-  let step = 0;
-
-  synthInterval = setInterval(() => {
-    if (!isPlaying) return;
-
-    synthTime += 0.25;
-    updateTimeline();
-
-    const dur = getActiveDuration();
-    if (synthTime >= dur) {
-      playNextTrack();
-      return;
-    }
-
-    // Play subtle harmonic notes on beat
-    if (audioCtx && audioCtx.state === 'running' && Math.floor(synthTime * 2) > step) {
-      step = Math.floor(synthTime * 2);
-      playSynthNote(chordNotes[step % chordNotes.length]);
-    }
-  }, 250);
-}
-
-function playSynthNote(freq) {
-  if (!audioCtx) return;
-  try {
-    const osc = audioCtx.createOscillator();
-    const gain = audioCtx.createGain();
-
-    osc.type = 'sine';
-    osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
-
-    const masterVol = parseFloat(document.getElementById('player-volume')?.value || 0.8);
-    gain.gain.setValueAtTime(0.001, audioCtx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(masterVol * 0.08, audioCtx.currentTime + 0.05);
-    gain.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + 0.6);
-
-    osc.connect(gain);
-    gain.connect(audioCtx.destination);
-
-    osc.start();
-    osc.stop(audioCtx.currentTime + 0.65);
-  } catch (e) {
-    // Ignore synth audio hiccups
-  }
-}
-
-function pauseSynth() {
-  clearInterval(synthInterval);
-}
-
-function stopSynth() {
-  clearInterval(synthInterval);
-  synthTime = 0;
+function escapeHtml(str) {
+  if (!str) return '';
+  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }

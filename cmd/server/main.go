@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/KAwasthi2889/Moodify/internal/analyzer"
+	"github.com/KAwasthi2889/Moodify/internal/cleanup"
 	"github.com/KAwasthi2889/Moodify/internal/config"
 	"github.com/KAwasthi2889/Moodify/internal/database"
 	"github.com/KAwasthi2889/Moodify/internal/logging"
@@ -45,6 +46,12 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Initialize and start background session/file cleaner.
+	cleanerCtx, cancelCleaner := context.WithCancel(context.Background())
+	defer cancelCleaner()
+	cleaner := cleanup.NewCleaner(db, store, cfg.SessionTTL, cfg.CleanupInterval)
+	cleaner.Start(cleanerCtx)
+
 	// Initialize sidecar runners.
 	identifier := metadata.NewIdentifier(cfg.PythonBin, "./python/identify.py")
 	embedder := metadata.NewEmbedder(cfg.PythonBin, "./python/embed_tags.py")
@@ -60,6 +67,8 @@ func main() {
 		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 		sig := <-sigCh
 		slog.Info("received shutdown signal", "signal", sig)
+
+		cancelCleaner()
 
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()

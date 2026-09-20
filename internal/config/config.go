@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/caarlos0/env/v11"
 	"github.com/joho/godotenv"
@@ -19,8 +20,10 @@ type Config struct {
 	DBPassword string `env:"DB_PASSWORD,required"`
 	DBName     string `env:"DB_NAME,required"`
 
-	// Storage
-	UploadDir string `env:"UPLOAD_DIR,notEmpty" envDefault:"./uploads"`
+	// Storage & Session Lifecycle
+	UploadDir       string        `env:"UPLOAD_DIR,notEmpty" envDefault:"./uploads"`
+	SessionTTL      time.Duration `env:"SESSION_TTL" envDefault:"24h"`
+	CleanupInterval time.Duration `env:"CLEANUP_INTERVAL" envDefault:"1h"`
 
 	// Python sidecar
 	PythonBin    string `env:"PYTHON_BIN,notEmpty" envDefault:"./python/.venv/bin/python"`

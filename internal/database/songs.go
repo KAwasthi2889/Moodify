@@ -3,6 +3,7 @@ package database
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strconv"
@@ -658,5 +659,106 @@ func (db *DB) GetMoodClusters(ctx context.Context) ([]MoodCluster, error) {
 	})
 
 	return clusters, nil
+}
+
+// GetSongsBySession returns all songs registered under the given session ID.
+func (db *DB) GetSongsBySession(ctx context.Context, sessionID string) ([]*Song, error) {
+	rows, err := db.Pool.Query(ctx, `
+		SELECT id, session_id, filename, original_name, format, file_path, file_size, uploaded_at, status
+		FROM songs
+		WHERE session_id = $1
+		ORDER BY uploaded_at ASC
+	`, sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("query songs by session %s: %w", sessionID, err)
+	}
+	defer rows.Close()
+
+	var songs []*Song
+	for rows.Next() {
+		var s Song
+		if err := rows.Scan(
+			&s.ID, &s.SessionID, &s.Filename, &s.OriginalName, &s.Format,
+			&s.FilePath, &s.SizeBytes, &s.UploadedAt, &s.Status,
+		); err != nil {
+			return nil, fmt.Errorf("scan song: %w", err)
+		}
+		songs = append(songs, &s)
+	}
+	return songs, rows.Err()
+}
+
+// DeleteSong atomically deletes a song from the database by UUID and returns the deleted song details.
+// Associated metadata, features, and lyrics are automatically cascade deleted by PostgreSQL.
+func (db *DB) DeleteSong(ctx context.Context, id uuid.UUID) (*Song, error) {
+	var s Song
+	s.ID = id
+	err := db.Pool.QueryRow(ctx, `
+		DELETE FROM songs
+		WHERE id = $1
+		RETURNING session_id, filename, original_name, format, file_path, file_size, uploaded_at, status
+	`, id).Scan(
+		&s.SessionID, &s.Filename, &s.OriginalName, &s.Format,
+		&s.FilePath, &s.SizeBytes, &s.UploadedAt, &s.Status,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, fmt.Errorf("delete song %s: %w", id, pgx.ErrNoRows)
+		}
+		return nil, fmt.Errorf("delete song %s: %w", id, err)
+	}
+	return &s, nil
+}
+
+// DeleteSession atomically deletes all songs associated with a session ID and returns them.
+func (db *DB) DeleteSession(ctx context.Context, sessionID string) ([]*Song, error) {
+	rows, err := db.Pool.Query(ctx, `
+		DELETE FROM songs
+		WHERE session_id = $1
+		RETURNING id, session_id, filename, original_name, format, file_path, file_size, uploaded_at, status
+	`, sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("delete session %s: %w", sessionID, err)
+	}
+	defer rows.Close()
+
+	var deleted []*Song
+	for rows.Next() {
+		var s Song
+		if err := rows.Scan(
+			&s.ID, &s.SessionID, &s.Filename, &s.OriginalName, &s.Format,
+			&s.FilePath, &s.SizeBytes, &s.UploadedAt, &s.Status,
+		); err != nil {
+			return nil, fmt.Errorf("scan deleted song: %w", err)
+		}
+		deleted = append(deleted, &s)
+	}
+	return deleted, rows.Err()
+}
+
+// DeleteExpiredSongs atomically deletes all songs uploaded before the cutoff time and returns them.
+func (db *DB) DeleteExpiredSongs(ctx context.Context, cutoff time.Time) ([]*Song, error) {
+	rows, err := db.Pool.Query(ctx, `
+		DELETE FROM songs
+		WHERE uploaded_at < $1
+		RETURNING id, session_id, filename, original_name, format, file_path, file_size, uploaded_at, status
+	`, cutoff)
+	if err != nil {
+		return nil, fmt.Errorf("delete expired songs before %v: %w", cutoff, err)
+	}
+	defer rows.Close()
+
+	var deleted []*Song
+	for rows.Next() {
+		var s Song
+		if err := rows.Scan(
+			&s.ID, &s.SessionID, &s.Filename, &s.OriginalName, &s.Format,
+			&s.FilePath, &s.SizeBytes, &s.UploadedAt, &s.Status,
+		); err != nil {
+			return nil, fmt.Errorf("scan expired song: %w", err)
+		}
+		deleted = append(deleted, &s)
+	}
+	return deleted, rows.Err()
 }
 

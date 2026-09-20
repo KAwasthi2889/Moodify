@@ -203,4 +203,47 @@ func TestUploadHandler(t *testing.T) {
 			_ = os.Remove(filepath.Join(tempDir, filename))
 		}
 	})
+
+	t.Run("Upload with explicit X-Session-ID", func(t *testing.T) {
+		customSession := "client-session-12345"
+		body := &bytes.Buffer{}
+		writer := multipart.NewWriter(body)
+		part, err := writer.CreateFormFile("file", "track.flac")
+		if err != nil {
+			t.Fatalf("failed to create form file: %v", err)
+		}
+		_, _ = part.Write([]byte("fLaC\x00\x00\x00\x22"))
+		_, _ = part.Write(bytes.Repeat([]byte{0xCC}, 256))
+		_ = writer.Close()
+
+		req := httptest.NewRequest("POST", "/api/v1/songs/upload", body)
+		req.Header.Set("Content-Type", writer.FormDataContentType())
+		req.Header.Set("X-Session-ID", customSession)
+		rec := httptest.NewRecorder()
+
+		uploadHandler.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("expected 201 Created, got %d", rec.Code)
+		}
+
+		if gotHeader := rec.Header().Get("X-Session-ID"); gotHeader != customSession {
+			t.Errorf("expected X-Session-ID response header %q, got %q", customSession, gotHeader)
+		}
+
+		var resp map[string]any
+		_ = json.Unmarshal(rec.Body.Bytes(), &resp)
+		if resp["session_id"] != customSession {
+			t.Errorf("expected session_id %q in response, got %v", customSession, resp["session_id"])
+		}
+
+		// Cleanup
+		if songIDStr, ok := resp["id"].(string); ok {
+			_, _ = db.Pool.Exec(context.Background(), "DELETE FROM songs WHERE id = $1", songIDStr)
+		}
+		if filename, ok := resp["filename"].(string); ok {
+			_ = os.Remove(filepath.Join(tempDir, filename))
+		}
+	})
 }
+

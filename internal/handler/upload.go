@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/KAwasthi2889/Moodify/internal/audio"
 	"github.com/KAwasthi2889/Moodify/internal/database"
 	"github.com/KAwasthi2889/Moodify/internal/storage"
@@ -35,6 +37,18 @@ func Upload(db *database.DB, store storage.FileStore) http.HandlerFunc {
 			return
 		}
 		defer file.Close()
+
+		// Determine session ID from header, form value, query parameter, or generate new UUID
+		sessionID := r.Header.Get("X-Session-ID")
+		if sessionID == "" {
+			sessionID = r.FormValue("session_id")
+		}
+		if sessionID == "" {
+			sessionID = r.URL.Query().Get("session_id")
+		}
+		if sessionID == "" {
+			sessionID = uuid.New().String()
+		}
 
 		// Read the first 12 bytes for magic byte detection.
 		headerBytes := make([]byte, 12)
@@ -84,6 +98,7 @@ func Upload(db *database.DB, store storage.FileStore) http.HandlerFunc {
 
 		// Insert song record in database.
 		song := &database.Song{
+			SessionID:    sessionID,
 			Filename:     storedName,
 			OriginalName: header.Filename,
 			Format:       string(detectedFormat),
@@ -98,8 +113,11 @@ func Upload(db *database.DB, store storage.FileStore) http.HandlerFunc {
 			return
 		}
 
+		w.Header().Set("X-Session-ID", sessionID)
+
 		slog.Info("file uploaded",
 			"song_id", song.ID,
+			"session_id", sessionID,
 			"original_name", header.Filename,
 			"detected_format", detectedFormat,
 			"extension_corrected", hasExtMismatch,
@@ -108,6 +126,7 @@ func Upload(db *database.DB, store storage.FileStore) http.HandlerFunc {
 
 		resp := map[string]any{
 			"id":                  song.ID,
+			"session_id":          sessionID,
 			"filename":            storedName,
 			"original_name":       header.Filename,
 			"corrected_filename":  correctedName,

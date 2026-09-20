@@ -39,6 +39,10 @@ func (s *Server) routes() http.Handler {
 		r.Get("/songs/clusters", handler.GetMoodClusters(s.db))
 		r.Get("/songs/{id}/similar", handler.GetSimilarSongs(s.db))
 		r.Get("/songs/{id}/download", handler.DownloadSong(s.db))
+		r.Delete("/songs/{id}", handler.DeleteSong(s.db, s.store))
+
+		// Session endpoints
+		r.Delete("/sessions/{id}", handler.DeleteSession(s.db, s.store))
 	})
 
 	return r

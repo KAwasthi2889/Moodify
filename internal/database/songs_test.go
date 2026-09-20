@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/KAwasthi2889/Moodify/internal/audio"
+	"github.com/KAwasthi2889/Moodify/internal/metadata"
 )
 
 func TestFormatAndParseVector(t *testing.T) {
@@ -347,6 +348,105 @@ func TestDatabase_NotFoundWrapping(t *testing.T) {
 	err = db.UpdateSongFile(ctx, randomID, "new.mp3", "/tmp/new.mp3")
 	if !errors.Is(err, pgx.ErrNoRows) {
 		t.Errorf("UpdateSongFile for non-existent song did not wrap pgx.ErrNoRows: %v", err)
+	}
+}
+
+func TestDeleteSong_CascadeAndSessionPurge(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	db, err := Connect(ctx, testDSN())
+	if err != nil {
+		t.Skipf("skipping integration test, postgres unavailable: %v", err)
+	}
+	defer db.Close()
+
+	sessionID := "test-session-" + uuid.New().String()
+
+	// 1. Create two songs in the same session
+	s1 := &Song{
+		SessionID:    sessionID,
+		Filename:     "song1.mp3",
+		OriginalName: "Song 1",
+		Format:       "mp3",
+		FilePath:     "/tmp/song1.mp3",
+		SizeBytes:    1024,
+		Status:       "ready",
+	}
+	if err := db.CreateSong(ctx, s1); err != nil {
+		t.Fatalf("failed to create song 1: %v", err)
+	}
+
+	s2 := &Song{
+		SessionID:    sessionID,
+		Filename:     "song2.mp3",
+		OriginalName: "Song 2",
+		Format:       "mp3",
+		FilePath:     "/tmp/song2.mp3",
+		SizeBytes:    2048,
+		Status:       "ready",
+	}
+	if err := db.CreateSong(ctx, s2); err != nil {
+		t.Fatalf("failed to create song 2: %v", err)
+	}
+
+	// Attach metadata to s1 to test ON DELETE CASCADE
+	meta := &metadata.SongMetadata{
+		Title:  "Cascaded Song",
+		Artist: "Cascade Artist",
+		Source: "test",
+	}
+	if _, err := db.UpsertMetadata(ctx, s1.ID, meta); err != nil {
+		t.Fatalf("failed to upsert metadata: %v", err)
+	}
+
+	// 2. Test GetSongsBySession
+	sessionSongs, err := db.GetSongsBySession(ctx, sessionID)
+	if err != nil {
+		t.Fatalf("GetSongsBySession failed: %v", err)
+	}
+	if len(sessionSongs) != 2 {
+		t.Fatalf("expected 2 songs for session, got %d", len(sessionSongs))
+	}
+
+	// 3. Test DeleteSong on s1
+	deletedSong, err := db.DeleteSong(ctx, s1.ID)
+	if err != nil {
+		t.Fatalf("DeleteSong failed: %v", err)
+	}
+	if deletedSong.ID != s1.ID || deletedSong.FilePath != "/tmp/song1.mp3" {
+		t.Errorf("unexpected deleted song details: %+v", deletedSong)
+	}
+
+	// Verify s1 is gone
+	_, err = db.GetSong(ctx, s1.ID)
+	if !errors.Is(err, pgx.ErrNoRows) {
+		t.Errorf("expected pgx.ErrNoRows for deleted song, got: %v", err)
+	}
+	// Verify metadata was cascade deleted
+	_, _, err = db.GetMetadata(ctx, s1.ID)
+	if !errors.Is(err, pgx.ErrNoRows) {
+		t.Errorf("expected metadata to be cascade-deleted, got: %v", err)
+	}
+
+	// 4. Test DeleteSession on s2
+	deletedSessionSongs, err := db.DeleteSession(ctx, sessionID)
+	if err != nil {
+		t.Fatalf("DeleteSession failed: %v", err)
+	}
+	if len(deletedSessionSongs) != 1 || deletedSessionSongs[0].ID != s2.ID {
+		t.Fatalf("expected 1 deleted song in session, got %d", len(deletedSessionSongs))
+	}
+
+	// Verify session is now empty
+	emptySongs, err := db.GetSongsBySession(ctx, sessionID)
+	if err != nil {
+		t.Fatalf("GetSongsBySession for empty session failed: %v", err)
+	}
+	if len(emptySongs) != 0 {
+		t.Errorf("expected 0 songs remaining in session, got %d", len(emptySongs))
 	}
 }
 

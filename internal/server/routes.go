@@ -36,6 +36,7 @@ func (s *Server) routes() http.Handler {
 		r.Get("/songs/{id}/features", handler.GetSongFeatures(s.db))
 		r.Get("/songs/clusters", handler.GetMoodClusters(s.db))
 		r.Get("/songs/{id}/similar", handler.GetSimilarSongs(s.db))
+		r.Get("/songs/{id}/download", handler.DownloadSong(s.db))
 	})
 
 	return r

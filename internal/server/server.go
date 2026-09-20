@@ -9,30 +9,33 @@ import (
 
 	"github.com/KAwasthi2889/Moodify/internal/analyzer"
 	"github.com/KAwasthi2889/Moodify/internal/database"
+	"github.com/KAwasthi2889/Moodify/internal/lyrics"
 	"github.com/KAwasthi2889/Moodify/internal/metadata"
 	"github.com/KAwasthi2889/Moodify/internal/storage"
 )
 
 // Server holds the HTTP server and its dependencies.
 type Server struct {
-	httpServer  *http.Server
-	db          *database.DB
-	store       storage.FileStore
-	identifier  *metadata.Identifier
-	embedder    *metadata.Embedder
-	analyzer    *analyzer.Analyzer
-	acoustIDKey string
+	httpServer   *http.Server
+	db           *database.DB
+	store        storage.FileStore
+	identifier   *metadata.Identifier
+	embedder     *metadata.Embedder
+	analyzer     *analyzer.Analyzer
+	lyricsClient *lyrics.Client
+	acoustIDKey  string
 }
 
 // New creates a new Server with the given dependencies.
-func New(port int, db *database.DB, store storage.FileStore, identifier *metadata.Identifier, embedder *metadata.Embedder, az *analyzer.Analyzer, acoustIDKey string) *Server {
+func New(port int, db *database.DB, store storage.FileStore, identifier *metadata.Identifier, embedder *metadata.Embedder, az *analyzer.Analyzer, lc *lyrics.Client, acoustIDKey string) *Server {
 	s := &Server{
-		db:          db,
-		store:       store,
-		identifier:  identifier,
-		embedder:    embedder,
-		analyzer:    az,
-		acoustIDKey: acoustIDKey,
+		db:           db,
+		store:        store,
+		identifier:   identifier,
+		embedder:     embedder,
+		analyzer:     az,
+		lyricsClient: lc,
+		acoustIDKey:  acoustIDKey,
 	}
 
 	router := s.routes()

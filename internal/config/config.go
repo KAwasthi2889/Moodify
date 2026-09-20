@@ -23,7 +23,11 @@ type Config struct {
 	UploadDir string `env:"UPLOAD_DIR,notEmpty" envDefault:"./uploads"`
 
 	// Python sidecar
-	PythonBin string `env:"PYTHON_BIN,notEmpty" envDefault:"./python/.venv/bin/python"`
+	PythonBin    string `env:"PYTHON_BIN,notEmpty" envDefault:"./python/.venv/bin/python"`
+	LyricsScript string `env:"LYRICS_SCRIPT,notEmpty" envDefault:"./python/lyrics.py"`
+
+	// Semantic & lyrical analysis
+	GeminiAPIKey string `env:"GEMINI_API_KEY" envDefault:""`
 
 	// AcoustID (Phase 2)
 	AcoustIDAPIKey string `env:"ACOUSTID_API_KEY" envDefault:""`

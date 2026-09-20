@@ -52,8 +52,13 @@ func DownloadSong(db *database.DB) http.HandlerFunc {
 			filename = filepath.Base(song.FilePath)
 		}
 
-		// Set attachment header with sanitized filename
-		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filename))
+		// Set inline disposition by default for streaming; attachment for download triggers
+		disposition := "inline"
+		if r.URL.Query().Get("download") == "true" {
+			disposition = "attachment"
+		}
+		w.Header().Set("Content-Disposition", fmt.Sprintf("%s; filename=%q", disposition, filename))
+		w.Header().Set("Accept-Ranges", "bytes")
 
 		// Map explicit audio mime-type if known
 		switch song.Format {

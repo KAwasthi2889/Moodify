@@ -152,7 +152,7 @@ func TestDownloadSong_Success(t *testing.T) {
 	}
 
 	disposition := rec.Header().Get("Content-Disposition")
-	expectedDisposition := `attachment; filename="Test_Track.mp3"`
+	expectedDisposition := `inline; filename="Test_Track.mp3"`
 	if disposition != expectedDisposition {
 		t.Errorf("expected Content-Disposition %s, got %s", expectedDisposition, disposition)
 	}
@@ -164,6 +164,14 @@ func TestDownloadSong_Success(t *testing.T) {
 
 	if rec.Body.String() != string(dummyContent) {
 		t.Errorf("body content mismatch: got %q, want %q", rec.Body.String(), string(dummyContent))
+	}
+
+	// Test explicit attachment download
+	reqDownload := httptest.NewRequest("GET", "/api/v1/songs/"+song.ID.String()+"/download?download=true", nil)
+	recDownload := httptest.NewRecorder()
+	r.ServeHTTP(recDownload, reqDownload)
+	if recDownload.Header().Get("Content-Disposition") != `attachment; filename="Test_Track.mp3"` {
+		t.Errorf("expected attachment disposition, got %s", recDownload.Header().Get("Content-Disposition"))
 	}
 
 	// 2. Test HTTP 206 Partial Content (Range Request)

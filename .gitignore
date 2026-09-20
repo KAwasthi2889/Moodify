@@ -3,3 +3,6 @@ local
 uploads
 python/.venv/
 __pycache__/
+server
+*.test
+

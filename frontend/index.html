@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Moodify — Next-Gen Audio Intelligence & Mood Studio</title>
+  <meta name="description" content="Production-grade acoustic intelligence and mood-clustering studio with multimodal 64-D audio embeddings and synchronized lyric analysis." />
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%2300f0ff'><polygon points='12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2'/></svg>" />
+
+  <!-- Google Fonts: Outfit (Display) + Plus Jakarta Sans (Body) + JetBrains Mono (Telemetry) -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Outfit:wght@600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+  <!-- Three.js Kinetic Soundwave Canvas -->
+  <canvas id="webgl-canvas"></canvas>
+
+  <div id="app">
+    <!-- Application Header -->
+    <header class="app-header">
+      <div class="brand-section">
+        <div class="brand-logo">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#040814" stroke-width="2.5">
+            <path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>
+          </svg>
+        </div>
+        <div class="brand-title">
+          Moodify
+          <span class="brand-badge">Studio</span>
+        </div>
+      </div>
+
+      <!-- Navigation Tabs -->
+      <nav class="nav-tabs" aria-label="Main Navigation">
+        <button class="tab-btn active" data-tab="library">Library & Telemetry</button>
+        <button class="tab-btn" data-tab="galaxy">Mood Galaxy</button>
+        <button class="tab-btn" data-tab="playlists">Playlist Studio</button>
+        <button class="tab-btn" data-tab="batch">Batch Station</button>
+      </nav>
+
+      <!-- Status Indicator Badge & Actions -->
+      <div class="header-actions">
+        <div id="header-badge-wrap"></div>
+      </div>
+    </header>
+
+    <!-- Main View Container -->
+    <main class="main-container">
+      <div id="tab-view-container"></div>
+    </main>
+  </div>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>

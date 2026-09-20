@@ -225,7 +225,7 @@ func TestFindSimilarSongsIntegration(t *testing.T) {
 
 	// 1. Test non-existent song ID returns pgx.ErrNoRows
 	randomID := uuid.New()
-	_, err = db.FindSimilarSongs(ctx, randomID, 0.70, 5)
+	_, err = db.FindSimilarSongs(ctx, randomID, 0.70, 5, "acoustic")
 	if !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("expected pgx.ErrNoRows for unanalyzed song, got: %v", err)
 	}
@@ -285,7 +285,7 @@ func TestFindSimilarSongsIntegration(t *testing.T) {
 	}()
 
 	// Query with high threshold (0.80): only Song B should qualify (Song C is ~0.0 similarity)
-	simsFiltered, err := db.FindSimilarSongs(ctx, songA.ID, 0.80, 10)
+	simsFiltered, err := db.FindSimilarSongs(ctx, songA.ID, 0.80, 10, "acoustic")
 	if err != nil {
 		t.Fatalf("FindSimilarSongs with threshold failed: %v", err)
 	}
@@ -297,7 +297,7 @@ func TestFindSimilarSongsIntegration(t *testing.T) {
 	}
 
 	// Query with broad threshold (0.0): both Song B and Song C should qualify, ordered by similarity
-	simsAll, err := db.FindSimilarSongs(ctx, songA.ID, 0.0, 10)
+	simsAll, err := db.FindSimilarSongs(ctx, songA.ID, 0.0, 10, "acoustic")
 	if err != nil {
 		t.Fatalf("FindSimilarSongs with broad threshold failed: %v", err)
 	}

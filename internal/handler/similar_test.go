@@ -81,6 +81,22 @@ func TestGetSimilarSongs_InvalidThreshold(t *testing.T) {
 	}
 }
 
+func TestGetSimilarSongs_InvalidMode(t *testing.T) {
+	t.Parallel()
+
+	h := GetSimilarSongs(nil)
+	r := chi.NewRouter()
+	r.Get("/api/v1/songs/{id}/similar", h)
+
+	req := httptest.NewRequest("GET", "/api/v1/songs/"+uuid.New().String()+"/similar?mode=invalid_mode", nil)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 Bad Request for invalid mode, got %d", rec.Code)
+	}
+}
+
 func TestGetSimilarSongs_NotFound(t *testing.T) {
 	t.Parallel()
 

@@ -11,7 +11,9 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/KAwasthi2889/Moodify/internal/database"
+	"github.com/KAwasthi2889/Moodify/internal/fusion"
 	"github.com/KAwasthi2889/Moodify/internal/lyrics"
+	"github.com/KAwasthi2889/Moodify/internal/metadata"
 )
 
 type syncLyricsRequest struct {
@@ -104,17 +106,43 @@ func SyncLyrics(db *database.DB, lc *lyrics.Client) http.HandlerFunc {
 			return
 		}
 
+		// If audio features exist, fuse with lyrics to update multimodal vector and inferred genre
+		var inferredGenre string
+		if feat, featErr := db.GetFeatures(r.Context(), songID); featErr == nil && feat != nil {
+			feat.MultimodalVector = fusion.ComputeMultimodalVector(feat.MoodVector, songLyric.EmotionVector)
+			primaryMood, allMoods := fusion.DeriveNuancedMood(feat.MatchedMoods, feat.Energy, feat.Brightness, songLyric.TopEmotions)
+			feat.MatchedMoods = allMoods
+			_, _ = db.UpsertFeatures(r.Context(), feat)
+
+			inferredGenre = fusion.InferGenre(
+				feat.TempoBPM, feat.Energy, feat.Brightness, feat.HarmonicRatio,
+				feat.PercussiveRatio, feat.BeatImpact, feat.DistortionZCR, primaryMood, songLyric.TopEmotions,
+			)
+
+			meta, _, metaErr := db.GetMetadata(r.Context(), songID)
+			if metaErr != nil || meta == nil {
+				meta = &metadata.SongMetadata{
+					Title:  song.OriginalName,
+					Source: "inferred",
+				}
+			}
+			meta.InferredGenre = inferredGenre
+			_, _ = db.UpsertMetadata(r.Context(), songID, meta)
+		}
+
 		slog.Info("song lyrics synchronized and stored",
 			"song_id", songID,
 			"is_synced", songLyric.IsSynced,
 			"language", songLyric.Language,
+			"inferred_genre", inferredGenre,
 			"emotions_count", len(songLyric.TopEmotions),
 		)
 
 		respondJSON(w, http.StatusOK, map[string]any{
-			"status":  "ok",
-			"song_id": songID,
-			"lyrics":  songLyric,
+			"status":         "ok",
+			"song_id":        songID,
+			"inferred_genre": inferredGenre,
+			"lyrics":         songLyric,
 		})
 	}
 }

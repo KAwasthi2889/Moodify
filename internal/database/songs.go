@@ -69,8 +69,8 @@ func (db *DB) UpsertMetadata(ctx context.Context, songID uuid.UUID, meta *metada
 		INSERT INTO song_metadata (
 			song_id, source, title, artist, album, album_artist,
 			release_year, genre, track_number, musicbrainz_id,
-			acoustid_score, english_title
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+			acoustid_score, english_title, inferred_genre
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 		ON CONFLICT (song_id) DO UPDATE SET
 			source = EXCLUDED.source,
 			title = EXCLUDED.title,
@@ -82,12 +82,13 @@ func (db *DB) UpsertMetadata(ctx context.Context, songID uuid.UUID, meta *metada
 			track_number = EXCLUDED.track_number,
 			musicbrainz_id = EXCLUDED.musicbrainz_id,
 			acoustid_score = EXCLUDED.acoustid_score,
-			english_title = EXCLUDED.english_title
+			english_title = EXCLUDED.english_title,
+			inferred_genre = EXCLUDED.inferred_genre
 		RETURNING id
 	`,
 		songID, meta.Source, meta.Title, meta.Artist, meta.Album, meta.AlbumArtist,
 		meta.ReleaseYear, meta.Genre, meta.TrackNumber, meta.MusicbrainzID,
-		meta.AcoustidScore, meta.EnglishTitle,
+		meta.AcoustidScore, meta.EnglishTitle, meta.InferredGenre,
 	).Scan(&metaID)
 
 	if err != nil {
@@ -104,13 +105,13 @@ func (db *DB) GetMetadata(ctx context.Context, songID uuid.UUID) (*metadata.Song
 	err := db.Pool.QueryRow(ctx, `
 		SELECT id, song_id, source, title, artist, album, album_artist,
 		       release_year, genre, track_number, musicbrainz_id,
-		       acoustid_score, english_title
+		       acoustid_score, english_title, inferred_genre
 		FROM song_metadata
 		WHERE song_id = $1
 	`, songID).Scan(
 		&metaID, &sid, &m.Source, &m.Title, &m.Artist, &m.Album, &m.AlbumArtist,
 		&m.ReleaseYear, &m.Genre, &m.TrackNumber, &m.MusicbrainzID,
-		&m.AcoustidScore, &m.EnglishTitle,
+		&m.AcoustidScore, &m.EnglishTitle, &m.InferredGenre,
 	)
 	if err != nil {
 		return nil, uuid.Nil, fmt.Errorf("query metadata for song %s: %w", songID, err)
@@ -137,10 +138,11 @@ type SongFeatures struct {
 	ID     uuid.UUID `json:"id"`
 	SongID uuid.UUID `json:"song_id"`
 	audio.AcousticFeatures
-	MatchedMoods []string           `json:"matched_moods"`
-	VibeScores   map[string]float64 `json:"vibe_scores"`
-	MoodVector   []float32          `json:"mood_vector"`
-	AnalyzedAt   time.Time          `json:"analyzed_at"`
+	MatchedMoods     []string           `json:"matched_moods"`
+	VibeScores       map[string]float64 `json:"vibe_scores"`
+	MoodVector       []float32          `json:"mood_vector"`
+	MultimodalVector []float32          `json:"multimodal_vector,omitempty"`
+	AnalyzedAt       time.Time          `json:"analyzed_at"`
 }
 
 // UpsertFeatures inserts or updates the acoustic feature record for a song.
@@ -159,13 +161,19 @@ func (db *DB) UpsertFeatures(ctx context.Context, f *SongFeatures) (uuid.UUID, e
 
 	vecStr := FormatVector(f.MoodVector)
 
+	var multiVecArg *string
+	if len(f.MultimodalVector) == 64 {
+		s := FormatVector(f.MultimodalVector)
+		multiVecArg = &s
+	}
+
 	var featID uuid.UUID
 	err = db.Pool.QueryRow(ctx, `
 		INSERT INTO song_features (
 			song_id, duration_sec, tempo_bpm, energy, brightness,
 			harmonic_ratio, percussive_ratio, beat_impact, distortion_zcr,
-			matched_moods, vibe_scores, mood_vector
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::vector)
+			matched_moods, vibe_scores, mood_vector, multimodal_vector
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::vector, $13::vector)
 		ON CONFLICT (song_id) DO UPDATE SET
 			duration_sec = EXCLUDED.duration_sec,
 			tempo_bpm = EXCLUDED.tempo_bpm,
@@ -178,12 +186,13 @@ func (db *DB) UpsertFeatures(ctx context.Context, f *SongFeatures) (uuid.UUID, e
 			matched_moods = EXCLUDED.matched_moods,
 			vibe_scores = EXCLUDED.vibe_scores,
 			mood_vector = EXCLUDED.mood_vector,
+			multimodal_vector = COALESCE(EXCLUDED.multimodal_vector, song_features.multimodal_vector),
 			analyzed_at = NOW()
 		RETURNING id, analyzed_at
 	`,
 		f.SongID, f.DurationSec, f.TempoBPM, f.Energy, f.Brightness,
 		f.HarmonicRatio, f.PercussiveRatio, f.BeatImpact, f.DistortionZCR,
-		f.MatchedMoods, vibeJSON, vecStr,
+		f.MatchedMoods, vibeJSON, vecStr, multiVecArg,
 	).Scan(&featID, &f.AnalyzedAt)
 
 	if err != nil {
@@ -198,17 +207,18 @@ func (db *DB) GetFeatures(ctx context.Context, songID uuid.UUID) (*SongFeatures,
 	var f SongFeatures
 	var vibeJSON []byte
 	var vecStr string
+	var multiStr *string
 
 	err := db.Pool.QueryRow(ctx, `
 		SELECT id, song_id, duration_sec, tempo_bpm, energy, brightness,
 		       harmonic_ratio, percussive_ratio, beat_impact, distortion_zcr,
-		       matched_moods, vibe_scores, mood_vector::text, analyzed_at
+		       matched_moods, vibe_scores, mood_vector::text, multimodal_vector::text, analyzed_at
 		FROM song_features
 		WHERE song_id = $1
 	`, songID).Scan(
 		&f.ID, &f.SongID, &f.DurationSec, &f.TempoBPM, &f.Energy, &f.Brightness,
 		&f.HarmonicRatio, &f.PercussiveRatio, &f.BeatImpact, &f.DistortionZCR,
-		&f.MatchedMoods, &vibeJSON, &vecStr, &f.AnalyzedAt,
+		&f.MatchedMoods, &vibeJSON, &vecStr, &multiStr, &f.AnalyzedAt,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("query features for song %s: %w", songID, err)
@@ -221,6 +231,10 @@ func (db *DB) GetFeatures(ctx context.Context, songID uuid.UUID) (*SongFeatures,
 	f.MoodVector, err = ParseVector(vecStr)
 	if err != nil {
 		return nil, fmt.Errorf("parse mood vector: %w", err)
+	}
+
+	if multiStr != nil && *multiStr != "" {
+		f.MultimodalVector, _ = ParseVector(*multiStr)
 	}
 
 	return &f, nil
@@ -258,13 +272,14 @@ func ParseVector(s string) ([]float32, error) {
 	return res, nil
 }
 
-// SimilarSong represents an acoustically similar song retrieved via pgvector cosine distance.
+// SimilarSong represents an acoustically or multimodally similar song retrieved via pgvector cosine distance.
 type SimilarSong struct {
 	ID              uuid.UUID          `json:"id"`
 	Filename        string             `json:"filename"`
 	Title           string             `json:"title"`
 	Artist          string             `json:"artist"`
 	Album           string             `json:"album"`
+	InferredGenre   string             `json:"inferred_genre,omitempty"`
 	DurationSec     float32            `json:"duration_sec"`
 	TempoBPM        float32            `json:"tempo_bpm"`
 	Energy          float32            `json:"energy"`
@@ -273,6 +288,7 @@ type SimilarSong struct {
 	VibeScores      map[string]float64 `json:"vibe_scores"`
 	Distance        float32            `json:"distance"`
 	SimilarityScore float32            `json:"similarity_score"`
+	SearchMode      string             `json:"search_mode,omitempty"`
 }
 
 // ClusterSong represents an individual song inside a mood cluster.
@@ -297,9 +313,8 @@ type MoodCluster struct {
 }
 
 // FindSimilarSongs performs an HNSW-indexed cosine distance query using pgvector
-// to find acoustically similar songs that meet the minimum similarity threshold,
-// ordered in decreasing order of similarity.
-func (db *DB) FindSimilarSongs(ctx context.Context, songID uuid.UUID, minSimilarity float32, limit int) ([]SimilarSong, error) {
+// across multimodal (64-D), acoustic (36-D), or lyrics (28-D) embedding spaces.
+func (db *DB) FindSimilarSongs(ctx context.Context, songID uuid.UUID, minSimilarity float32, limit int, mode string) ([]SimilarSong, error) {
 	if minSimilarity < 0.0 {
 		minSimilarity = 0.0
 	}
@@ -314,43 +329,160 @@ func (db *DB) FindSimilarSongs(ctx context.Context, songID uuid.UUID, minSimilar
 		limit = 200
 	}
 
-	var targetExists bool
-	err := db.Pool.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM song_features WHERE song_id = $1)", songID).Scan(&targetExists)
+	// 1. Determine actual search mode based on target song data
+	var hasFeatures, hasMultimodal, hasLyrics bool
+	err := db.Pool.QueryRow(ctx, `
+		SELECT 
+			EXISTS(SELECT 1 FROM song_features WHERE song_id = $1),
+			EXISTS(SELECT 1 FROM song_features WHERE song_id = $1 AND multimodal_vector IS NOT NULL),
+			EXISTS(SELECT 1 FROM song_lyrics WHERE song_id = $1)
+	`, songID).Scan(&hasFeatures, &hasMultimodal, &hasLyrics)
 	if err != nil {
 		return nil, fmt.Errorf("check target features for %s: %w", songID, err)
 	}
-	if !targetExists {
+
+	if !hasFeatures && !hasLyrics {
 		return nil, pgx.ErrNoRows
 	}
 
-	rows, err := db.Pool.Query(ctx, `
-		SELECT 
-			s.id,
-			s.filename,
-			COALESCE(sm.title, s.original_name) AS title,
-			COALESCE(sm.artist, '') AS artist,
-			COALESCE(sm.album, '') AS album,
-			sf.duration_sec,
-			sf.tempo_bpm,
-			sf.energy,
-			sf.brightness,
-			sf.matched_moods,
-			sf.vibe_scores,
-			(sf.mood_vector <=> target.mood_vector)::real AS distance,
-			GREATEST(0.0, 1.0 - (sf.mood_vector <=> target.mood_vector))::real AS similarity
-		FROM song_features sf
-		JOIN songs s ON s.id = sf.song_id
-		LEFT JOIN song_metadata sm ON sm.song_id = s.id
-		CROSS JOIN (
-			SELECT mood_vector FROM song_features WHERE song_id = $1
-		) target
-		WHERE sf.song_id != $1
-		  AND (1.0 - (sf.mood_vector <=> target.mood_vector)) >= $2
-		ORDER BY sf.mood_vector <=> target.mood_vector ASC
-		LIMIT $3
-	`, songID, minSimilarity, limit)
+	actualMode := mode
+	if actualMode == "" || actualMode == "default" {
+		if hasMultimodal {
+			actualMode = "multimodal"
+		} else {
+			actualMode = "acoustic"
+		}
+	}
+
+	var query string
+	switch actualMode {
+	case "lyrics":
+		if !hasLyrics {
+			return nil, pgx.ErrNoRows
+		}
+		query = `
+			SELECT 
+				s.id,
+				s.filename,
+				COALESCE(sm.title, s.original_name) AS title,
+				COALESCE(sm.artist, '') AS artist,
+				COALESCE(sm.album, '') AS album,
+				COALESCE(sm.inferred_genre, '') AS inferred_genre,
+				COALESCE(sf.duration_sec, 0.0) AS duration_sec,
+				COALESCE(sf.tempo_bpm, 0.0) AS tempo_bpm,
+				COALESCE(sf.energy, 0.0) AS energy,
+				COALESCE(sf.brightness, 0.0) AS brightness,
+				COALESCE(sf.matched_moods, '{}') AS matched_moods,
+				COALESCE(sf.vibe_scores, '{}'::jsonb) AS vibe_scores,
+				(sl.emotion_vector <=> target.emotion_vector)::real AS distance,
+				GREATEST(0.0, 1.0 - (sl.emotion_vector <=> target.emotion_vector))::real AS similarity
+			FROM song_lyrics sl
+			JOIN songs s ON s.id = sl.song_id
+			LEFT JOIN song_features sf ON sf.song_id = s.id
+			LEFT JOIN song_metadata sm ON sm.song_id = s.id
+			CROSS JOIN (
+				SELECT emotion_vector FROM song_lyrics WHERE song_id = $1
+			) target
+			WHERE sl.song_id != $1
+			  AND (1.0 - (sl.emotion_vector <=> target.emotion_vector)) >= $2
+			ORDER BY sl.emotion_vector <=> target.emotion_vector ASC
+			LIMIT $3
+		`
+	case "multimodal":
+		if !hasMultimodal {
+			// Fallback to acoustic if target has no multimodal vector yet
+			actualMode = "acoustic"
+			query = `
+				SELECT 
+					s.id,
+					s.filename,
+					COALESCE(sm.title, s.original_name) AS title,
+					COALESCE(sm.artist, '') AS artist,
+					COALESCE(sm.album, '') AS album,
+					COALESCE(sm.inferred_genre, '') AS inferred_genre,
+					sf.duration_sec,
+					sf.tempo_bpm,
+					sf.energy,
+					sf.brightness,
+					sf.matched_moods,
+					sf.vibe_scores,
+					(sf.mood_vector <=> target.mood_vector)::real AS distance,
+					GREATEST(0.0, 1.0 - (sf.mood_vector <=> target.mood_vector))::real AS similarity
+				FROM song_features sf
+				JOIN songs s ON s.id = sf.song_id
+				LEFT JOIN song_metadata sm ON sm.song_id = s.id
+				CROSS JOIN (
+					SELECT mood_vector FROM song_features WHERE song_id = $1
+				) target
+				WHERE sf.song_id != $1
+				  AND (1.0 - (sf.mood_vector <=> target.mood_vector)) >= $2
+				ORDER BY sf.mood_vector <=> target.mood_vector ASC
+				LIMIT $3
+			`
+		} else {
+			query = `
+				SELECT 
+					s.id,
+					s.filename,
+					COALESCE(sm.title, s.original_name) AS title,
+					COALESCE(sm.artist, '') AS artist,
+					COALESCE(sm.album, '') AS album,
+					COALESCE(sm.inferred_genre, '') AS inferred_genre,
+					sf.duration_sec,
+					sf.tempo_bpm,
+					sf.energy,
+					sf.brightness,
+					sf.matched_moods,
+					sf.vibe_scores,
+					(sf.multimodal_vector <=> target.multimodal_vector)::real AS distance,
+					GREATEST(0.0, 1.0 - (sf.multimodal_vector <=> target.multimodal_vector))::real AS similarity
+				FROM song_features sf
+				JOIN songs s ON s.id = sf.song_id
+				LEFT JOIN song_metadata sm ON sm.song_id = s.id
+				CROSS JOIN (
+					SELECT multimodal_vector FROM song_features WHERE song_id = $1
+				) target
+				WHERE sf.song_id != $1
+				  AND sf.multimodal_vector IS NOT NULL
+				  AND (1.0 - (sf.multimodal_vector <=> target.multimodal_vector)) >= $2
+				ORDER BY sf.multimodal_vector <=> target.multimodal_vector ASC
+				LIMIT $3
+			`
+		}
+	default: // acoustic
+		actualMode = "acoustic"
+		query = `
+			SELECT 
+				s.id,
+				s.filename,
+				COALESCE(sm.title, s.original_name) AS title,
+				COALESCE(sm.artist, '') AS artist,
+				COALESCE(sm.album, '') AS album,
+				COALESCE(sm.inferred_genre, '') AS inferred_genre,
+				sf.duration_sec,
+				sf.tempo_bpm,
+				sf.energy,
+				sf.brightness,
+				sf.matched_moods,
+				sf.vibe_scores,
+				(sf.mood_vector <=> target.mood_vector)::real AS distance,
+				GREATEST(0.0, 1.0 - (sf.mood_vector <=> target.mood_vector))::real AS similarity
+			FROM song_features sf
+			JOIN songs s ON s.id = sf.song_id
+			LEFT JOIN song_metadata sm ON sm.song_id = s.id
+			CROSS JOIN (
+				SELECT mood_vector FROM song_features WHERE song_id = $1
+			) target
+			WHERE sf.song_id != $1
+			  AND (1.0 - (sf.mood_vector <=> target.mood_vector)) >= $2
+			ORDER BY sf.mood_vector <=> target.mood_vector ASC
+			LIMIT $3
+		`
+	}
+
+	rows, err := db.Pool.Query(ctx, query, songID, minSimilarity, limit)
 	if err != nil {
-		return nil, fmt.Errorf("query similar songs for %s: %w", songID, err)
+		return nil, fmt.Errorf("query similar songs for %s (%s): %w", songID, actualMode, err)
 	}
 	defer rows.Close()
 
@@ -364,6 +496,7 @@ func (db *DB) FindSimilarSongs(ctx context.Context, songID uuid.UUID, minSimilar
 			&sim.Title,
 			&sim.Artist,
 			&sim.Album,
+			&sim.InferredGenre,
 			&sim.DurationSec,
 			&sim.TempoBPM,
 			&sim.Energy,
@@ -385,6 +518,7 @@ func (db *DB) FindSimilarSongs(ctx context.Context, songID uuid.UUID, minSimilar
 		if sim.VibeScores == nil {
 			sim.VibeScores = make(map[string]float64)
 		}
+		sim.SearchMode = actualMode
 		results = append(results, sim)
 	}
 

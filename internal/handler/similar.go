@@ -50,10 +50,16 @@ func GetSimilarSongs(db *database.DB) http.HandlerFunc {
 			limit = parsedLimit
 		}
 
-		sims, err := db.FindSimilarSongs(r.Context(), songID, float32(threshold), limit)
+		mode := r.URL.Query().Get("mode")
+		if mode != "" && mode != "multimodal" && mode != "acoustic" && mode != "lyrics" {
+			respondError(w, http.StatusBadRequest, "mode must be one of: multimodal, acoustic, lyrics")
+			return
+		}
+
+		sims, err := db.FindSimilarSongs(r.Context(), songID, float32(threshold), limit, mode)
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
-				respondError(w, http.StatusNotFound, "features have not been analyzed for this song yet")
+				respondError(w, http.StatusNotFound, "features or lyrics have not been analyzed for this song yet")
 				return
 			}
 			slog.Error("failed to find similar songs", "error", err, "song_id", songID)
@@ -64,6 +70,7 @@ func GetSimilarSongs(db *database.DB) http.HandlerFunc {
 		respondJSON(w, http.StatusOK, map[string]any{
 			"status":        "ok",
 			"song_id":       songID,
+			"mode":          mode,
 			"threshold":     threshold,
 			"count":         len(sims),
 			"similar_songs": sims,

@@ -91,10 +91,14 @@ func Identify(db *database.DB, identifier *metadata.Identifier, az *analyzer.Ana
 		var autoSaved bool
 		if autoSave && len(identResult.Matches) > 0 {
 			top := identResult.Matches[0]
+			if top.Fingerprint == "" {
+				top.Fingerprint = identResult.Fingerprint
+			}
 			if _, err := db.UpsertMetadata(r.Context(), songID, &top.SongMetadata); err != nil {
 				slog.Error("failed to auto-save metadata", "error", err, "song_id", songID)
 			} else {
 				autoSaved = true
+				_ = db.UpdateSongStatus(r.Context(), songID, "tagged")
 			}
 		}
 

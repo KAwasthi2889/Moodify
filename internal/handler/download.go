@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
-	"path/filepath"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -47,10 +46,8 @@ func DownloadSong(db *database.DB) http.HandlerFunc {
 			return
 		}
 
-		filename := song.Filename
-		if filename == "" {
-			filename = filepath.Base(song.FilePath)
-		}
+		meta, _, _ := db.GetMetadata(r.Context(), songID)
+		filename := ResolveDownloadFilename(song, meta)
 
 		// Set inline disposition by default for streaming; attachment for download triggers
 		disposition := "inline"

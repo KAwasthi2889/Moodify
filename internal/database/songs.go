@@ -70,8 +70,8 @@ func (db *DB) UpsertMetadata(ctx context.Context, songID uuid.UUID, meta *metada
 		INSERT INTO song_metadata (
 			song_id, source, title, artist, album, album_artist,
 			release_year, genre, track_number, musicbrainz_id,
-			acoustid_score, english_title, inferred_genre
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+			acoustid_score, english_title, inferred_genre, fingerprint
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 		ON CONFLICT (song_id) DO UPDATE SET
 			source = EXCLUDED.source,
 			title = EXCLUDED.title,
@@ -84,12 +84,13 @@ func (db *DB) UpsertMetadata(ctx context.Context, songID uuid.UUID, meta *metada
 			musicbrainz_id = EXCLUDED.musicbrainz_id,
 			acoustid_score = EXCLUDED.acoustid_score,
 			english_title = EXCLUDED.english_title,
-			inferred_genre = EXCLUDED.inferred_genre
+			inferred_genre = EXCLUDED.inferred_genre,
+			fingerprint = COALESCE(EXCLUDED.fingerprint, song_metadata.fingerprint)
 		RETURNING id
 	`,
 		songID, meta.Source, meta.Title, meta.Artist, meta.Album, meta.AlbumArtist,
 		meta.ReleaseYear, meta.Genre, meta.TrackNumber, meta.MusicbrainzID,
-		meta.AcoustidScore, meta.EnglishTitle, meta.InferredGenre,
+		meta.AcoustidScore, meta.EnglishTitle, meta.InferredGenre, meta.Fingerprint,
 	).Scan(&metaID)
 
 	if err != nil {
@@ -106,13 +107,13 @@ func (db *DB) GetMetadata(ctx context.Context, songID uuid.UUID) (*metadata.Song
 	err := db.Pool.QueryRow(ctx, `
 		SELECT id, song_id, source, title, artist, album, album_artist,
 		       release_year, genre, track_number, musicbrainz_id,
-		       acoustid_score, english_title, inferred_genre
+		       acoustid_score, english_title, inferred_genre, COALESCE(fingerprint, '')
 		FROM song_metadata
 		WHERE song_id = $1
 	`, songID).Scan(
 		&metaID, &sid, &m.Source, &m.Title, &m.Artist, &m.Album, &m.AlbumArtist,
 		&m.ReleaseYear, &m.Genre, &m.TrackNumber, &m.MusicbrainzID,
-		&m.AcoustidScore, &m.EnglishTitle, &m.InferredGenre,
+		&m.AcoustidScore, &m.EnglishTitle, &m.InferredGenre, &m.Fingerprint,
 	)
 	if err != nil {
 		return nil, uuid.Nil, fmt.Errorf("query metadata for song %s: %w", songID, err)
@@ -281,6 +282,7 @@ type SimilarSong struct {
 	Artist          string             `json:"artist"`
 	Album           string             `json:"album"`
 	InferredGenre   string             `json:"inferred_genre,omitempty"`
+	Fingerprint     string             `json:"fingerprint,omitempty"`
 	DurationSec     float32            `json:"duration_sec"`
 	TempoBPM        float32            `json:"tempo_bpm"`
 	Energy          float32            `json:"energy"`
@@ -369,6 +371,7 @@ func (db *DB) FindSimilarSongs(ctx context.Context, songID uuid.UUID, minSimilar
 				COALESCE(sm.artist, '') AS artist,
 				COALESCE(sm.album, '') AS album,
 				COALESCE(sm.inferred_genre, '') AS inferred_genre,
+				COALESCE(sm.fingerprint, '') AS fingerprint,
 				COALESCE(sf.duration_sec, 0.0) AS duration_sec,
 				COALESCE(sf.tempo_bpm, 0.0) AS tempo_bpm,
 				COALESCE(sf.energy, 0.0) AS energy,
@@ -401,6 +404,7 @@ func (db *DB) FindSimilarSongs(ctx context.Context, songID uuid.UUID, minSimilar
 					COALESCE(sm.artist, '') AS artist,
 					COALESCE(sm.album, '') AS album,
 					COALESCE(sm.inferred_genre, '') AS inferred_genre,
+					COALESCE(sm.fingerprint, '') AS fingerprint,
 					sf.duration_sec,
 					sf.tempo_bpm,
 					sf.energy,
@@ -429,6 +433,7 @@ func (db *DB) FindSimilarSongs(ctx context.Context, songID uuid.UUID, minSimilar
 					COALESCE(sm.artist, '') AS artist,
 					COALESCE(sm.album, '') AS album,
 					COALESCE(sm.inferred_genre, '') AS inferred_genre,
+					COALESCE(sm.fingerprint, '') AS fingerprint,
 					sf.duration_sec,
 					sf.tempo_bpm,
 					sf.energy,
@@ -460,6 +465,7 @@ func (db *DB) FindSimilarSongs(ctx context.Context, songID uuid.UUID, minSimilar
 				COALESCE(sm.artist, '') AS artist,
 				COALESCE(sm.album, '') AS album,
 				COALESCE(sm.inferred_genre, '') AS inferred_genre,
+				COALESCE(sm.fingerprint, '') AS fingerprint,
 				sf.duration_sec,
 				sf.tempo_bpm,
 				sf.energy,
@@ -481,6 +487,13 @@ func (db *DB) FindSimilarSongs(ctx context.Context, songID uuid.UUID, minSimilar
 		`
 	}
 
+	var targetTitle, targetArtist, targetFP string
+	if tm, _, mErr := db.GetMetadata(ctx, songID); mErr == nil && tm != nil {
+		targetTitle = strings.TrimSpace(tm.Title)
+		targetArtist = strings.TrimSpace(tm.Artist)
+		targetFP = strings.TrimSpace(tm.Fingerprint)
+	}
+
 	rows, err := db.Pool.Query(ctx, query, songID, minSimilarity, limit)
 	if err != nil {
 		return nil, fmt.Errorf("query similar songs for %s (%s): %w", songID, actualMode, err)
@@ -498,6 +511,7 @@ func (db *DB) FindSimilarSongs(ctx context.Context, songID uuid.UUID, minSimilar
 			&sim.Artist,
 			&sim.Album,
 			&sim.InferredGenre,
+			&sim.Fingerprint,
 			&sim.DurationSec,
 			&sim.TempoBPM,
 			&sim.Energy,
@@ -510,6 +524,18 @@ func (db *DB) FindSimilarSongs(ctx context.Context, songID uuid.UUID, minSimilar
 		if err != nil {
 			return nil, fmt.Errorf("scan similar song: %w", err)
 		}
+
+		// Exclude seed song itself or duplicate version with same fingerprint or title+artist
+		if sim.ID == songID {
+			continue
+		}
+		if targetFP != "" && sim.Fingerprint != "" && sim.Fingerprint == targetFP {
+			continue
+		}
+		if targetTitle != "" && targetArtist != "" && strings.EqualFold(sim.Title, targetTitle) && strings.EqualFold(sim.Artist, targetArtist) {
+			continue
+		}
+
 		if len(vibeJSON) > 0 {
 			_ = json.Unmarshal(vibeJSON, &sim.VibeScores)
 		}
@@ -826,6 +852,11 @@ type SongWithDetails struct {
 	Album         string    `json:"album,omitempty"`
 	Genre         string    `json:"genre,omitempty"`
 	InferredGenre string    `json:"inferred_genre,omitempty"`
+	Year          int       `json:"year,omitempty"`
+	ReleaseYear   int       `json:"release_year,omitempty"`
+	Fingerprint   string    `json:"fingerprint,omitempty"`
+	IsDuplicate   bool      `json:"is_duplicate,omitempty"`
+	DuplicateOf   string    `json:"duplicate_of,omitempty"`
 	MatchedMoods  []string  `json:"matched_moods,omitempty"`
 	DurationSec   float32   `json:"duration_sec,omitempty"`
 	TempoBPM      float32   `json:"tempo_bpm,omitempty"`
@@ -857,6 +888,8 @@ func (db *DB) ListSongs(ctx context.Context, sessionID, status string, limit, of
 		SELECT 
 			s.id, s.session_id, s.filename, s.original_name, s.format, s.file_size, s.status, s.uploaded_at,
 			COALESCE(m.title, ''), COALESCE(m.artist, ''), COALESCE(m.album, ''), COALESCE(m.genre, ''), COALESCE(m.inferred_genre, ''),
+			COALESCE(m.release_year, 0),
+			COALESCE(m.fingerprint, ''),
 			COALESCE(sf.matched_moods, '{}'), COALESCE(sf.duration_sec, 0.0), COALESCE(sf.tempo_bpm, 0.0),
 			(sf.id IS NOT NULL) AS has_features,
 			(sl.id IS NOT NULL) AS has_lyrics
@@ -880,13 +913,36 @@ func (db *DB) ListSongs(ctx context.Context, sessionID, status string, limit, of
 		if err := rows.Scan(
 			&swd.ID, &swd.SessionID, &swd.Filename, &swd.OriginalName, &swd.Format, &swd.SizeBytes, &swd.Status, &swd.UploadedAt,
 			&swd.Title, &swd.Artist, &swd.Album, &swd.Genre, &swd.InferredGenre,
+			&swd.Year,
+			&swd.Fingerprint,
 			&swd.MatchedMoods, &swd.DurationSec, &swd.TempoBPM,
 			&swd.HasFeatures, &swd.HasLyrics,
 		); err != nil {
 			return nil, 0, fmt.Errorf("scan song with details: %w", err)
 		}
+		swd.ReleaseYear = swd.Year
 		songs = append(songs, &swd)
 	}
+
+	// Detect duplicates based on title + artist + fingerprint (or identical fingerprint)
+	seen := make(map[string]uuid.UUID)
+	for _, s := range songs {
+		var key string
+		if s.Fingerprint != "" {
+			key = "fp:" + s.Fingerprint
+		} else if s.Title != "" && s.Artist != "" {
+			key = "meta:" + strings.ToLower(strings.TrimSpace(s.Artist)) + "|" + strings.ToLower(strings.TrimSpace(s.Title))
+		}
+		if key != "" {
+			if originalID, found := seen[key]; found {
+				s.IsDuplicate = true
+				s.DuplicateOf = originalID.String()
+			} else {
+				seen[key] = s.ID
+			}
+		}
+	}
+
 	return songs, total, rows.Err()
 }
 

@@ -17,6 +17,7 @@ type Match struct {
 // IdentifyResult represents the output from the Python identification script.
 type IdentifyResult struct {
 	Status              string  `json:"status"`
+	Fingerprint         string  `json:"fingerprint,omitempty"`
 	FingerprintDuration float64 `json:"fingerprint_duration"`
 	Matches             []Match `json:"matches"`
 	Warning             string  `json:"warning,omitempty"`

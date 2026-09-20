@@ -120,11 +120,16 @@ def identify_song(file_path: str, api_key: str) -> Dict[str, Any]:
     except Exception as e:
         return {"status": "error", "message": f"Fingerprint generation failed: {e}"}
 
+    fp_str = fingerprint.decode("utf-8") if isinstance(fingerprint, bytes) else str(fingerprint)
+
     if not api_key:
         # If no AcoustID key is configured, fallback to embedded tags
         fallback = extract_mutagen_fallback(file_path)
+        if fallback:
+            fallback["fingerprint"] = fp_str
         return {
             "status": "ok",
+            "fingerprint": fp_str,
             "fingerprint_duration": duration,
             "matches": [fallback] if fallback else [],
             "note": "ACOUSTID_API_KEY not provided; returned embedded tags fallback",
@@ -140,8 +145,11 @@ def identify_song(file_path: str, api_key: str) -> Dict[str, Any]:
         )
     except Exception as e:
         fallback = extract_mutagen_fallback(file_path)
+        if fallback:
+            fallback["fingerprint"] = fp_str
         return {
             "status": "ok",
+            "fingerprint": fp_str,
             "fingerprint_duration": duration,
             "matches": [fallback] if fallback else [],
             "warning": f"AcoustID lookup failed: {e}",
@@ -241,10 +249,12 @@ def identify_song(file_path: str, api_key: str) -> Dict[str, Any]:
     if not matches:
         fallback = extract_mutagen_fallback(file_path)
         if fallback:
+            fallback["fingerprint"] = fp_str
             matches.append(fallback)
 
     return {
         "status": "ok",
+        "fingerprint": fp_str,
         "fingerprint_duration": duration,
         "matches": matches,
     }

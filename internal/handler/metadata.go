@@ -60,6 +60,8 @@ func SaveMetadata(db *database.DB) http.HandlerFunc {
 			return
 		}
 
+		_ = db.UpdateSongStatus(r.Context(), songID, "tagged")
+
 		respondJSON(w, http.StatusOK, MetadataResponse{
 			ID:           metaID.String(),
 			SongID:       songID.String(),

@@ -1,19 +1,24 @@
 /**
  * Moodify Workshop & Batch Ingestion Studio
  * High-aesthetic upload workspace supporting drag-and-drop batch ingestion,
- * dynamic 'Upload More Files' state transition, automatic metadata correction,
- * and live real-time visual progress tracking for 64-D neural Moodify queue analysis.
+ * tagged file selection & bulk downloading, song removal, real-time filename/title search,
+ * and seamless navigation to the Similarity Studio for ready tracks.
  */
 
 import { MoodifyAPI } from '../api/endpoints.js';
 import { openMetadataModal } from './MetadataModal.js';
 import { playTrack } from './AudioPlayer.js';
+import { promptDeleteModal, showToast, showDuplicateSummaryModal } from './Modal.js';
 
 let uploadedSongs = [];
+let selectedSongIds = new Set();
+let searchFilter = '';
 let isUploading = false;
 let isAutoTagging = false;
 let isMoodifying = false;
 let statusPollInterval = null;
+let resolvedDuplicates = new Set();
+let hasShownDuplicateModal = false;
 
 export async function renderWorkshopPage(container, onNavigate) {
   if (!container) return;
@@ -38,6 +43,12 @@ export async function renderWorkshopPage(container, onNavigate) {
     const unanalyzedCount = uploadedSongs.filter(s => s.status !== 'ready').length;
     const percentReady = totalCount > 0 ? Math.round((readyCount / totalCount) * 100) : 0;
     const isProcessing = queuedCount > 0 || analyzingCount > 0 || isMoodifying;
+
+    // Filter songs by search input (space-insensitive and punctuation-tolerant)
+    const filteredSongs = uploadedSongs.filter(song => MoodifyAPI.matchesSongSearch(song, searchFilter));
+
+    const selectedCount = selectedSongIds.size;
+    const isAllSelected = filteredSongs.length > 0 && filteredSongs.every(s => selectedSongIds.has(s.id));
 
     container.innerHTML = `
       <div class="workshop-page">
@@ -120,7 +131,7 @@ export async function renderWorkshopPage(container, onNavigate) {
               ` : unanalyzedCount === 0 ? `
                 <span class="summary-status-pill ready">
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>
-                  All ${totalCount} Tracks 64-D Indexed
+                  All ${totalCount} Tracks Ready in 64-D Hyperspace
                 </span>
               ` : `
                 <span class="summary-status-pill pending">${unanalyzedCount} Ready to Moodify</span>
@@ -128,6 +139,17 @@ export async function renderWorkshopPage(container, onNavigate) {
             </div>
 
             <div class="actions-buttons">
+              ${selectedCount > 0 ? `
+                <button class="btn-bulk-download" id="btn-download-selected">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                  <span>${selectedCount === 1 ? 'Download Selected' : `Download Selected (${selectedCount})`}</span>
+                </button>
+                <button class="btn-bulk-remove" id="btn-remove-selected" title="Remove Selected Tracks">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
+                  <span>Remove Selected (${selectedCount})</span>
+                </button>
+              ` : ''}
+
               <button class="btn-hero-primary btn-moodify-batch ${isProcessing ? 'loading' : ''}" id="btn-moodify-batch" ${unanalyzedCount === 0 || isProcessing || identifyingCount > 0 ? 'disabled' : ''}>
                 ${isProcessing ? `
                   <span class="spinner"></span> 
@@ -162,7 +184,16 @@ export async function renderWorkshopPage(container, onNavigate) {
             <div class="panel-header">
               <div class="panel-title-group">
                 <h3 class="panel-title">Uploaded Tracks</h3>
-                <span class="panel-subtitle">Tracks automatically auto-tag via Chromaprint & calculate 64-D vectors in pgvector</span>
+                <span class="panel-subtitle">Select tagged tracks to download, remove tracks, or find similar songs in 64-D vector space</span>
+              </div>
+
+              <!-- Real-time search by filename, title, or artist -->
+              <div class="table-search-box">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                <input type="text" id="workshop-search-input" placeholder="Search by filename, title, artist..." value="${escapeHtml(searchFilter)}" />
+                ${searchFilter ? `
+                  <button class="btn-clear-search" id="btn-clear-search" title="Clear search">×</button>
+                ` : ''}
               </div>
             </div>
 
@@ -170,7 +201,10 @@ export async function renderWorkshopPage(container, onNavigate) {
               <table class="workshop-table">
                 <thead>
                   <tr>
-                    <th style="width: 40px;">#</th>
+                    <th style="width: 36px; text-align: center;">
+                      <input type="checkbox" id="select-all-checkbox" class="track-checkbox" ${isAllSelected ? 'checked' : ''} title="Select all filtered songs" />
+                    </th>
+                    <th style="width: 36px;">#</th>
                     <th style="width: 44px;">Play</th>
                     <th>Track Title & Artist</th>
                     <th>Format</th>
@@ -180,12 +214,15 @@ export async function renderWorkshopPage(container, onNavigate) {
                   </tr>
                 </thead>
                 <tbody>
-                  ${uploadedSongs.map((song, index) => {
+                  ${filteredSongs.length > 0 ? filteredSongs.map((song, index) => {
                     const status = song.status || 'uploaded';
-                    const displayTitle = song.title || song.original_name || song.filename || 'Untitled';
+                    const displayTitle = MoodifyAPI.getCleanTitle(song);
                     const displayArtist = song.artist || 'Unknown Artist';
                     const format = (song.format || 'mp3').toUpperCase();
+                    const isFormatCorrected = Boolean(song.extension_corrected || song.format_warning);
                     const sizeMb = song.size_bytes ? (song.size_bytes / (1024 * 1024)).toFixed(1) + ' MB' : '—';
+                    const isSelected = selectedSongIds.has(song.id);
+                    const isReady = status === 'ready';
 
                     let badgeContent = escapeHtml(status);
                     let badgeClass = status;
@@ -206,7 +243,10 @@ export async function renderWorkshopPage(container, onNavigate) {
                     }
 
                     return `
-                      <tr class="track-row ${status}" data-id="${escapeHtml(song.id)}">
+                      <tr class="track-row ${status} ${isSelected ? 'row-selected' : ''}" data-id="${escapeHtml(song.id)}">
+                        <td class="cell-checkbox" style="text-align: center;">
+                          <input type="checkbox" class="track-checkbox track-select-cb" data-id="${escapeHtml(song.id)}" ${isSelected ? 'checked' : ''} />
+                        </td>
                         <td class="cell-index mono-num">${index + 1}</td>
                         <td class="cell-play">
                           <button class="btn-row-play" data-action="play" data-id="${escapeHtml(song.id)}" title="Play Audio">
@@ -218,7 +258,9 @@ export async function renderWorkshopPage(container, onNavigate) {
                           <div class="track-secondary-artist" id="artist-${escapeHtml(song.id)}">${escapeHtml(displayArtist)} ${song.album ? `• ${escapeHtml(song.album)}` : ''}</div>
                         </td>
                         <td class="cell-format">
-                          <span class="format-pill">${escapeHtml(format)}</span>
+                          <span class="format-pill ${isFormatCorrected ? 'format-corrected' : ''}" title="${escapeHtml(isFormatCorrected ? `Detected & auto-corrected format: ${format}` : `Format: ${format}`)}">
+                            ${escapeHtml(format)}
+                          </span>
                         </td>
                         <td class="cell-size mono-num">${escapeHtml(sizeMb)}</td>
                         <td class="cell-status">
@@ -227,18 +269,59 @@ export async function renderWorkshopPage(container, onNavigate) {
                           </span>
                         </td>
                         <td class="cell-actions" style="text-align: right;">
-                          <a class="btn-row-download" href="/api/v1/songs/${escapeHtml(song.id)}/download?download=true" download="${escapeHtml(song.filename || 'track')}" title="Download Track">
+                          ${isReady ? `
+                            <button class="btn-find-similar" data-action="find-similar" data-id="${escapeHtml(song.id)}" title="Find Similar Songs in 64-D Space">
+                              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+                              <span>Find Similar</span>
+                            </button>
+                          ` : ''}
+
+                          <a class="btn-row-download" href="/api/v1/songs/${escapeHtml(song.id)}/download?download=true" download="${escapeHtml(MoodifyAPI.getCleanFilename(song))}" title="Download: ${escapeHtml(MoodifyAPI.getCleanFilename(song))}">
                             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
                             <span>Download</span>
                           </a>
+
                           <button class="btn-correct-meta" data-action="edit-meta" data-id="${escapeHtml(song.id)}" title="Manually Adjust Metadata">
                             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
                             <span>Edit Tags</span>
                           </button>
+
+                          <button class="btn-row-remove" data-action="remove-song" data-id="${escapeHtml(song.id)}" title="Remove Track from Library">
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
+                          </button>
                         </td>
                       </tr>
+                      ${(song.is_duplicate && !resolvedDuplicates.has(song.id)) ? `
+                        <tr class="duplicate-banner-row" data-duplicate-id="${escapeHtml(song.id)}">
+                          <td colspan="8">
+                            <div class="inline-duplicate-banner">
+                              <div class="dup-text-group">
+                                <span class="dup-pill">⚠️ Duplicate Audio</span>
+                                <span class="dup-msg">Matches an existing track in your library (identical acoustic fingerprint).</span>
+                              </div>
+                              <div class="dup-action-group">
+                                <button class="btn-dup-replace" data-action="dup-replace" data-id="${escapeHtml(song.id)}" data-target="${escapeHtml(song.duplicate_of || '')}">
+                                  🔄 Replace Existing
+                                </button>
+                                <button class="btn-dup-discard" data-action="dup-discard" data-id="${escapeHtml(song.id)}">
+                                  ⏭️ Discard
+                                </button>
+                                <button class="btn-dup-keep" data-action="dup-keep" data-id="${escapeHtml(song.id)}">
+                                  ➕ Keep Both
+                                </button>
+                              </div>
+                            </div>
+                          </td>
+                        </tr>
+                      ` : ''}
                     `;
-                  }).join('')}
+                  }).join('') : `
+                    <tr>
+                      <td colspan="8" style="text-align: center; padding: 40px; color: var(--color-text-muted);">
+                        No songs match your search query: "${escapeHtml(searchFilter)}"
+                      </td>
+                    </tr>
+                  `}
                 </tbody>
               </table>
             </div>
@@ -263,6 +346,192 @@ export async function renderWorkshopPage(container, onNavigate) {
         statusPollInterval = null;
       }
       if (onNavigate) onNavigate('landing');
+    });
+
+    // Search input event
+    const searchInput = container.querySelector('#workshop-search-input');
+    searchInput?.addEventListener('input', (e) => {
+      searchFilter = e.target.value;
+      render();
+      // Keep focus on search input after render
+      const newInput = container.querySelector('#workshop-search-input');
+      if (newInput) {
+        newInput.focus();
+        newInput.setSelectionRange(newInput.value.length, newInput.value.length);
+      }
+    });
+
+    const clearSearchBtn = container.querySelector('#btn-clear-search');
+    clearSearchBtn?.addEventListener('click', () => {
+      searchFilter = '';
+      render();
+    });
+
+    // Checkbox selection: Select All
+    const selectAllCb = container.querySelector('#select-all-checkbox');
+    selectAllCb?.addEventListener('change', (e) => {
+      const isChecked = e.target.checked;
+      const filtered = uploadedSongs.filter(song => MoodifyAPI.matchesSongSearch(song, searchFilter));
+
+      filtered.forEach(song => {
+        if (isChecked) {
+          selectedSongIds.add(song.id);
+        } else {
+          selectedSongIds.delete(song.id);
+        }
+      });
+      render();
+    });
+
+    // Checkbox selection: Individual rows
+    const rowCheckboxes = container.querySelectorAll('.track-select-cb');
+    rowCheckboxes.forEach(cb => {
+      cb.addEventListener('change', (e) => {
+        const id = cb.dataset.id;
+        if (e.target.checked) {
+          selectedSongIds.add(id);
+        } else {
+          selectedSongIds.delete(id);
+        }
+        render();
+      });
+    });
+
+    // Bulk or single download selected songs
+    const bulkDownloadBtn = container.querySelector('#btn-download-selected');
+    bulkDownloadBtn?.addEventListener('click', async () => {
+      if (selectedSongIds.size === 0) return;
+      const idsToDownload = Array.from(selectedSongIds);
+      
+      // If only 1 song is selected, download directly as individual file with clean filename
+      if (idsToDownload.length === 1) {
+        const singleId = idsToDownload[0];
+        const song = uploadedSongs.find(s => s.id === singleId);
+        const cleanName = song ? MoodifyAPI.getCleanFilename(song) : 'track.mp3';
+        const a = document.createElement('a');
+        a.href = `/api/v1/songs/${encodeURIComponent(singleId)}/download?download=true`;
+        a.download = cleanName;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        showToast(`Downloading "${cleanName}"`, 'success');
+        return;
+      }
+
+      // If multiple songs selected, stream ZIP archive
+      try {
+        bulkDownloadBtn.disabled = true;
+        const origText = bulkDownloadBtn.innerHTML;
+        bulkDownloadBtn.innerHTML = `<span class="spinner-sm"></span> Packaging ZIP...`;
+        await MoodifyAPI.batchDownloadZip(idsToDownload);
+        showToast(`Downloaded moodify_songs.zip (${idsToDownload.length} tracks)`, 'success');
+        bulkDownloadBtn.innerHTML = origText;
+      } catch (err) {
+        showToast(`Failed to download zip: ${err.message}`, 'error');
+      } finally {
+        bulkDownloadBtn.disabled = false;
+      }
+    });
+
+    // Bulk remove selected songs
+    const bulkRemoveBtn = container.querySelector('#btn-remove-selected');
+    bulkRemoveBtn?.addEventListener('click', () => {
+      if (selectedSongIds.size === 0) return;
+      const count = selectedSongIds.size;
+      const targetLabel = count === 1 ? '1 selected track' : `${count} selected tracks`;
+      promptDeleteModal(targetLabel, async () => {
+        const ids = Array.from(selectedSongIds);
+        for (const id of ids) {
+          try {
+            await MoodifyAPI.deleteSong(id);
+          } catch (err) {
+            console.warn(`Failed to delete song ${id}:`, err);
+          }
+        }
+        uploadedSongs = uploadedSongs.filter(s => !selectedSongIds.has(s.id));
+        selectedSongIds.clear();
+        showToast(`Removed ${count} track${count > 1 ? 's' : ''} from library`, 'info');
+        render();
+      });
+    });
+
+    // Remove song handlers with custom glassmorphic modal
+    const removeBtns = container.querySelectorAll('button[data-action="remove-song"]');
+    removeBtns.forEach(btn => {
+      btn.addEventListener('click', () => {
+        const id = btn.dataset.id;
+        const song = uploadedSongs.find(s => s.id === id);
+        const name = song ? (song.title || song.original_name || song.filename || 'track') : 'track';
+        
+        promptDeleteModal(name, async () => {
+          await MoodifyAPI.deleteSong(id);
+          uploadedSongs = uploadedSongs.filter(s => s.id !== id);
+          selectedSongIds.delete(id);
+          showToast(`Removed "${name}" from library`, 'info');
+          render();
+        });
+      });
+    });
+
+    // Inline Duplicate Action Handlers (Approach A)
+    container.querySelectorAll('button[data-action="dup-replace"]').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const songId = btn.dataset.id;
+        const targetId = btn.dataset.target;
+        resolvedDuplicates.add(songId);
+        if (targetId) {
+          try {
+            await MoodifyAPI.deleteSong(targetId);
+            uploadedSongs = uploadedSongs.filter(s => s.id !== targetId);
+            selectedSongIds.delete(targetId);
+            showToast('Replaced older version with this track', 'success');
+          } catch (e) {
+            console.warn(e);
+          }
+        }
+        render();
+      });
+    });
+
+    container.querySelectorAll('button[data-action="dup-discard"]').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const songId = btn.dataset.id;
+        resolvedDuplicates.add(songId);
+        try {
+          await MoodifyAPI.deleteSong(songId);
+          uploadedSongs = uploadedSongs.filter(s => s.id !== songId);
+          selectedSongIds.delete(songId);
+          showToast('Discarded duplicate track', 'info');
+        } catch (e) {
+          console.warn(e);
+        }
+        render();
+      });
+    });
+
+    container.querySelectorAll('button[data-action="dup-keep"]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const songId = btn.dataset.id;
+        resolvedDuplicates.add(songId);
+        showToast('Kept both versions in library', 'info');
+        render();
+      });
+    });
+
+    // Find Similar handler (navigates to Similarity Page)
+    const similarBtns = container.querySelectorAll('button[data-action="find-similar"]');
+    similarBtns.forEach(btn => {
+      btn.addEventListener('click', () => {
+        const id = btn.dataset.id;
+        const song = uploadedSongs.find(s => s.id === id);
+        if (song && onNavigate) {
+          if (statusPollInterval) {
+            clearInterval(statusPollInterval);
+            statusPollInterval = null;
+          }
+          onNavigate('similarity', { seedSong: song });
+        }
+      });
     });
 
     // File input trigger
@@ -300,13 +569,27 @@ export async function renderWorkshopPage(container, onNavigate) {
       }
     });
 
-    // Play track handlers
+    // Play track handlers (play button & track row body)
     const playBtns = container.querySelectorAll('button[data-action="play"]');
     playBtns.forEach(btn => {
-      btn.addEventListener('click', () => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
         const id = btn.dataset.id;
         const song = uploadedSongs.find(s => s.id === id);
-        if (song) playTrack(song);
+        if (song) playTrack(song, uploadedSongs);
+      });
+    });
+
+    // Clicking anywhere on the track row body plays the song (unless clicking on interactive inputs/buttons/links)
+    const trackRows = container.querySelectorAll('.track-row');
+    trackRows.forEach(row => {
+      row.addEventListener('click', (e) => {
+        if (e.target.closest('input, button, a, .cell-checkbox, .inline-duplicate-banner')) {
+          return;
+        }
+        const id = row.dataset.id;
+        const song = uploadedSongs.find(s => s.id === id);
+        if (song) playTrack(song, uploadedSongs);
       });
     });
 
@@ -341,21 +624,23 @@ export async function renderWorkshopPage(container, onNavigate) {
     try {
       const res = await MoodifyAPI.batchUpload(files);
       let newlyUploaded = [];
-      if (res && res.songs && res.songs.length > 0) {
-        newlyUploaded = res.songs;
-        uploadedSongs = [...res.songs, ...uploadedSongs];
+      const incomingList = (res && res.successes && res.successes.length > 0) ? res.successes : ((res && res.songs) ? res.songs : []);
+
+      if (incomingList.length > 0) {
+        newlyUploaded = incomingList;
+        uploadedSongs = [...incomingList, ...uploadedSongs];
       } else {
         const listRes = await MoodifyAPI.listSongs();
         uploadedSongs = (listRes && listRes.songs) ? listRes.songs : uploadedSongs;
-        newlyUploaded = uploadedSongs;
       }
 
       isUploading = false;
       render();
 
-      // AUTOMATIC METADATA CORRECTION:
-      // Start immediately without waiting for user input!
-      autoCorrectMetadata(newlyUploaded);
+      // Automatically tag only newly uploaded songs
+      if (newlyUploaded.length > 0) {
+        autoCorrectMetadata(newlyUploaded);
+      }
     } catch (err) {
       alert(`Batch upload failed: ${err.message}`);
       isUploading = false;
@@ -363,22 +648,16 @@ export async function renderWorkshopPage(container, onNavigate) {
     }
   }
 
-  /**
-   * Automatically fingerprints and corrects metadata for uploaded songs
-   * Runs in the background without requiring user clicks or waiting for user input
-   */
   async function autoCorrectMetadata(songsToTag) {
     if (!songsToTag || songsToTag.length === 0) return;
     isAutoTagging = true;
 
-    // Filter to songs that are untagged
     const targetSongs = songsToTag.filter(s => s.status !== 'ready' && s.status !== 'tagged');
     if (targetSongs.length === 0) {
       isAutoTagging = false;
       return;
     }
 
-    // Mark as identifying
     targetSongs.forEach(s => {
       const idx = uploadedSongs.findIndex(item => item.id === s.id);
       if (idx !== -1) {
@@ -387,7 +666,6 @@ export async function renderWorkshopPage(container, onNavigate) {
     });
     render();
 
-    // Process with controlled concurrency (2 at a time to be polite to MusicBrainz/AcoustID)
     const concurrency = 2;
     let index = 0;
 
@@ -404,14 +682,18 @@ export async function renderWorkshopPage(container, onNavigate) {
               uploadedSongs[idx].title = topMatch.title || uploadedSongs[idx].title || song.original_name;
               uploadedSongs[idx].artist = topMatch.artist || uploadedSongs[idx].artist || 'Unknown Artist';
               uploadedSongs[idx].album = topMatch.album || uploadedSongs[idx].album || '';
+              uploadedSongs[idx].year = topMatch.release_year || topMatch.year || uploadedSongs[idx].year || '';
+              uploadedSongs[idx].genre = topMatch.genre || topMatch.inferred_genre || uploadedSongs[idx].genre || '';
+              uploadedSongs[idx].status = 'tagged';
+            } else {
+              uploadedSongs[idx].status = 'uploaded';
             }
-            uploadedSongs[idx].status = 'tagged';
           }
         } catch (err) {
           console.warn(`Auto-tagging failed for ${song.id}:`, err);
           const idx = uploadedSongs.findIndex(item => item.id === song.id);
           if (idx !== -1) {
-            uploadedSongs[idx].status = 'tagged';
+            uploadedSongs[idx].status = 'uploaded';
           }
         }
         render();
@@ -424,8 +706,67 @@ export async function renderWorkshopPage(container, onNavigate) {
     }
     await Promise.all(workers);
 
+    // Refresh library from backend to get updated metadata & duplicate flags
+    try {
+      const refreshed = await MoodifyAPI.listSongs();
+      if (refreshed && refreshed.songs) {
+        uploadedSongs = uploadedSongs.map(localSong => {
+          const remote = refreshed.songs.find(r => r.id === localSong.id);
+          if (!remote) return localSong;
+          return {
+            ...remote,
+            status: localSong.status === 'tagged' ? 'tagged' : remote.status,
+            title: localSong.title || remote.title,
+            artist: localSong.artist || remote.artist,
+            album: localSong.album || remote.album,
+            year: localSong.year || remote.year,
+            genre: localSong.genre || remote.genre
+          };
+        });
+      }
+    } catch (_) {}
+
     isAutoTagging = false;
     render();
+
+    // Hybrid Approach B: Prompt user with Modal B for any remaining duplicates
+    checkUnresolvedDuplicatesModal();
+  }
+
+  function checkUnresolvedDuplicatesModal() {
+    const unresolved = uploadedSongs.filter(s => s.is_duplicate && !resolvedDuplicates.has(s.id));
+    if (unresolved.length > 0 && !hasShownDuplicateModal) {
+      hasShownDuplicateModal = true;
+      showDuplicateSummaryModal(unresolved, {
+        onReplace: async (songId, targetId) => {
+          resolvedDuplicates.add(songId);
+          if (targetId) {
+            try {
+              await MoodifyAPI.deleteSong(targetId);
+              uploadedSongs = uploadedSongs.filter(s => s.id !== targetId);
+              selectedSongIds.delete(targetId);
+              showToast('Replaced older version with this track', 'success');
+            } catch (_) {}
+          }
+          render();
+        },
+        onDiscard: async (songId) => {
+          resolvedDuplicates.add(songId);
+          try {
+            await MoodifyAPI.deleteSong(songId);
+            uploadedSongs = uploadedSongs.filter(s => s.id !== songId);
+            selectedSongIds.delete(songId);
+            showToast('Discarded duplicate track', 'info');
+          } catch (_) {}
+          render();
+        },
+        onKeepAll: (allUnresolved) => {
+          allUnresolved.forEach(s => resolvedDuplicates.add(s.id));
+          showToast('Kept all duplicate tracks in library', 'info');
+          render();
+        }
+      });
+    }
   }
 
   function startStatusPolling() {
@@ -459,7 +800,6 @@ export async function renderWorkshopPage(container, onNavigate) {
 
     isMoodifying = true;
 
-    // Mark songs as analyzing in local UI immediately
     uploadedSongs = uploadedSongs.map(s => {
       if (unanalyzedIds.includes(s.id)) {
         return { ...s, status: 'queued' };

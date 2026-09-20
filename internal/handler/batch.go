@@ -3,11 +3,13 @@ package handler
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -41,12 +43,14 @@ func BatchUpload(db *database.DB, store storage.FileStore, maxFileSizeMB int) ht
 		}
 
 		type uploadedSong struct {
-			ID           uuid.UUID `json:"id"`
-			Filename     string    `json:"filename"`
-			OriginalName string    `json:"original_name"`
-			Format       string    `json:"format"`
-			SizeBytes    int64     `json:"size_bytes"`
-			Status       string    `json:"status"`
+			ID                 uuid.UUID `json:"id"`
+			Filename           string    `json:"filename"`
+			OriginalName       string    `json:"original_name"`
+			Format             string    `json:"format"`
+			SizeBytes          int64     `json:"size_bytes"`
+			Status             string    `json:"status"`
+			FormatWarning      string    `json:"format_warning,omitempty"`
+			ExtensionCorrected bool      `json:"extension_corrected,omitempty"`
 		}
 
 		type uploadError struct {
@@ -63,7 +67,7 @@ func BatchUpload(db *database.DB, store storage.FileStore, maxFileSizeMB int) ht
 				break
 			}
 			if err != nil {
-				slog.Error("failed reading next multipart part", "error", err)
+				failures = append(failures, uploadError{Filename: "unknown", Error: "stream read error: " + err.Error()})
 				break
 			}
 
@@ -76,8 +80,8 @@ func BatchUpload(db *database.DB, store storage.FileStore, maxFileSizeMB int) ht
 				continue
 			}
 
-			filename := part.FileName()
-			if filename == "" {
+			filename := filepath.Base(part.FileName())
+			if filename == "" || filename == "." {
 				part.Close()
 				continue
 			}
@@ -86,11 +90,11 @@ func BatchUpload(db *database.DB, store storage.FileStore, maxFileSizeMB int) ht
 				sessionID = uuid.New().String()
 			}
 
-			// Read header for magic byte detection
-			headerBytes := make([]byte, 12)
+			// Read up to 512 bytes to sniff magic bytes format.
+			headerBytes := make([]byte, 512)
 			n, err := io.ReadFull(part, headerBytes)
-			if err != nil && err != io.ErrUnexpectedEOF {
-				failures = append(failures, uploadError{Filename: filename, Error: "unable to read file header"})
+			if err != nil && !errors.Is(err, io.ErrUnexpectedEOF) && !errors.Is(err, io.EOF) {
+				failures = append(failures, uploadError{Filename: filename, Error: "failed to read file header: " + err.Error()})
 				part.Close()
 				continue
 			}
@@ -104,6 +108,17 @@ func BatchUpload(db *database.DB, store storage.FileStore, maxFileSizeMB int) ht
 				})
 				part.Close()
 				continue
+			}
+
+			// Detect if uploaded file extension differs from true audio magic bytes
+			ext := strings.TrimPrefix(filepath.Ext(filename), ".")
+			extFormat := audio.ExtensionToFormat(strings.ToLower(ext))
+			hasExtMismatch := extFormat != "" && extFormat != detectedFormat
+			originalName := filename
+			var formatWarning string
+			if hasExtMismatch {
+				originalName = strings.TrimSuffix(filename, filepath.Ext(filename)) + "." + string(detectedFormat)
+				formatWarning = fmt.Sprintf("File '%s' was uploaded with extension '.%s', but detected as '%s'. Format updated to '%s'.", filename, ext, detectedFormat, strings.ToUpper(string(detectedFormat)))
 			}
 
 			storedName := generateFilename(filename, string(detectedFormat))
@@ -125,7 +140,7 @@ func BatchUpload(db *database.DB, store storage.FileStore, maxFileSizeMB int) ht
 			song := &database.Song{
 				SessionID:    sessionID,
 				Filename:     storedName,
-				OriginalName: filename,
+				OriginalName: originalName,
 				Format:       string(detectedFormat),
 				FilePath:     savedPath,
 				SizeBytes:    actualSizeBytes,
@@ -140,12 +155,14 @@ func BatchUpload(db *database.DB, store storage.FileStore, maxFileSizeMB int) ht
 			}
 
 			successes = append(successes, uploadedSong{
-				ID:           song.ID,
-				Filename:     storedName,
-				OriginalName: filename,
-				Format:       string(detectedFormat),
-				SizeBytes:    song.SizeBytes,
-				Status:       song.Status,
+				ID:                 song.ID,
+				Filename:           storedName,
+				OriginalName:       originalName,
+				Format:             string(detectedFormat),
+				SizeBytes:          song.SizeBytes,
+				Status:             song.Status,
+				FormatWarning:      formatWarning,
+				ExtensionCorrected: hasExtMismatch,
 			})
 
 			part.Close()

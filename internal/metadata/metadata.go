@@ -15,4 +15,5 @@ type SongMetadata struct {
 	AcoustidScore float64 `json:"acoustid_score"`
 	EnglishTitle  string  `json:"english_title"`
 	InferredGenre string  `json:"inferred_genre,omitempty"`
+	Fingerprint   string  `json:"fingerprint,omitempty"`
 }

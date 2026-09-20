@@ -13,10 +13,11 @@ import { initAudioPlayer } from './components/AudioPlayer.js';
 import { initSessionDrawer, openSessionDrawer } from './components/SessionDrawer.js';
 import { renderLandingPage } from './components/LandingPage.js';
 import { renderWorkshopPage } from './components/WorkshopPage.js';
+import { renderSimilarityPage } from './components/SimilarityPage.js';
 
 let currentView = 'landing';
 
-export function navigateTo(viewName) {
+export function navigateTo(viewName, params = {}) {
   currentView = viewName;
   const viewContainer = document.getElementById('tab-view-container');
   if (!viewContainer) return;
@@ -25,6 +26,8 @@ export function navigateTo(viewName) {
 
   if (viewName === 'workshop') {
     renderWorkshopPage(viewContainer, navigateTo);
+  } else if (viewName === 'similarity') {
+    renderSimilarityPage(viewContainer, params.seedSong, navigateTo);
   } else {
     renderLandingPage(viewContainer, navigateTo);
   }
@@ -48,7 +51,7 @@ async function initApp() {
   // 5. Setup Hamburger Menu Drawer Event
   const hamburgerBtn = document.getElementById('btn-open-session-drawer');
   hamburgerBtn?.addEventListener('click', () => {
-    openSessionDrawer();
+    openSessionDrawer(navigateTo);
   });
 
   // 6. Header navigation interactions

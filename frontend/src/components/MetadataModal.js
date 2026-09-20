@@ -18,14 +18,19 @@ export function openMetadataModal(song, onSaved) {
   const title = song.title || song.original_name || song.filename || '';
   const artist = song.artist || '';
   const album = song.album || '';
-  const year = song.year || '';
-  const genre = song.genre || '';
+  const year = song.year || song.release_year || '';
+  const genre = song.genre || song.inferred_genre || '';
+  const format = (song.format || 'mp3').toUpperCase();
+  const isFormatCorrected = Boolean(song.extension_corrected || song.format_warning);
 
   modalContainer.innerHTML = `
     <div class="modal-card" id="metadata-modal-card">
       <div class="modal-header">
         <div class="modal-title-group">
-          <h3 class="modal-title">Correct Audio Metadata</h3>
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <h3 class="modal-title">Edit Audio Tags</h3>
+            <span class="badge-format" style="font-size: 10px; padding: 2px 6px; ${isFormatCorrected ? 'background: rgba(16,185,129,0.16); color: #10b981; border: 1px solid rgba(16,185,129,0.5);' : 'background: rgba(0,240,255,0.12); color: var(--color-action); border: 1px solid rgba(0,240,255,0.3);'} border-radius: 4px; font-weight: 600;" title="${escapeHtml(isFormatCorrected ? `Detected & auto-corrected format: ${format}` : `Format: ${format}`)}">${escapeHtml(format)}</span>
+          </div>
           <span class="modal-subtitle">${escapeHtml(song.original_name || song.filename || 'Track')}</span>
         </div>
         <button class="modal-close-btn" id="btn-close-metadata-modal" title="Close">
@@ -53,7 +58,7 @@ export function openMetadataModal(song, onSaved) {
         <div class="form-row">
           <div class="form-group flex-1">
             <label class="form-label" for="meta-year">Release Year</label>
-            <input class="form-input" id="meta-year" type="number" value="${escapeHtml(String(year))}" placeholder="e.g. 2011" min="1900" max="2099" />
+            <input class="form-input" id="meta-year" type="number" value="${escapeHtml(String(year || ''))}" placeholder="e.g. 2011" min="1900" max="2099" />
           </div>
           <div class="form-group flex-1">
             <label class="form-label" for="meta-genre">Genre</label>
@@ -81,6 +86,35 @@ export function openMetadataModal(song, onSaved) {
   setTimeout(() => {
     modalContainer.querySelector('#meta-title')?.focus();
   }, 100);
+
+  // Asynchronously query server for any newly tagged metadata (e.g. AcoustID / MusicBrainz)
+  if (song && song.id) {
+    MoodifyAPI.getSongMetadata(song.id).then(res => {
+      if (!res) return;
+      const meta = res.metadata || res;
+      const titleIn = modalContainer.querySelector('#meta-title');
+      const artistIn = modalContainer.querySelector('#meta-artist');
+      const albumIn = modalContainer.querySelector('#meta-album');
+      const yearIn = modalContainer.querySelector('#meta-year');
+      const genreIn = modalContainer.querySelector('#meta-genre');
+
+      if (meta.title && titleIn && (!titleIn.value || titleIn.value === song.original_name || titleIn.value === song.filename)) {
+        titleIn.value = meta.title;
+      }
+      if (meta.artist && artistIn && !artistIn.value) {
+        artistIn.value = meta.artist;
+      }
+      if (meta.album && albumIn && !albumIn.value) {
+        albumIn.value = meta.album;
+      }
+      if ((meta.release_year || meta.year) && yearIn && !yearIn.value) {
+        yearIn.value = meta.release_year || meta.year;
+      }
+      if ((meta.genre || meta.inferred_genre) && genreIn && !genreIn.value) {
+        genreIn.value = meta.genre || meta.inferred_genre;
+      }
+    }).catch(() => {});
+  }
 
   // Close handlers
   modalContainer.addEventListener('click', (e) => {

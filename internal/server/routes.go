@@ -43,6 +43,8 @@ func (s *Server) routes() http.Handler {
 		r.Post("/songs/batch/analyze", handler.BatchAnalyze(s.db, s.queue))
 		r.Get("/songs/batch/status", handler.GetBatchStatus(s.db, s.queue))
 		r.Get("/songs/{id}/download", handler.DownloadSong(s.db))
+		r.Post("/songs/batch/download", handler.BatchDownload(s.db))
+		r.Get("/songs/batch/download", handler.BatchDownload(s.db))
 		r.Delete("/songs/{id}", handler.DeleteSong(s.db, s.store))
 
 		// Session endpoints

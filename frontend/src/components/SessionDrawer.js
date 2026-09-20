@@ -190,7 +190,7 @@ function renderDrawerContent() {
           const isSelected = selectedDrawerSongIds.has(song.id);
           const isReady = song.status === 'ready';
           const format = (song.format || 'mp3').toUpperCase();
-          const isFormatCorrected = Boolean(song.extension_corrected || song.format_warning);
+          const isFormatCorrected = MoodifyAPI.isFormatCorrected(song);
           const title = MoodifyAPI.getCleanTitle(song);
           const artist = song.artist || 'Unknown Artist';
           const album = song.album ? `• ${song.album}` : '';

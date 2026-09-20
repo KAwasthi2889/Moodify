@@ -129,8 +129,31 @@ func BatchDownload(db *database.DB) http.HandlerFunc {
 	}
 }
 
+// cleanTitlePart removes outer whitespace and enclosing parentheses from title parts.
+func cleanTitlePart(s string) string {
+	s = strings.TrimSpace(s)
+	if strings.HasPrefix(s, "(") && strings.HasSuffix(s, ")") && len(s) >= 2 {
+		s = strings.TrimSpace(s[1 : len(s)-1])
+	}
+	return s
+}
+
+// hasNonLatin checks if the string contains Cyrillic, CJK, Hangul, or Arabic characters.
+func hasNonLatin(s string) bool {
+	for _, r := range s {
+		if (r >= 0x0400 && r <= 0x04FF) ||
+			(r >= 0x4E00 && r <= 0x9FFF) ||
+			(r >= 0x3040 && r <= 0x30FF) ||
+			(r >= 0xAC00 && r <= 0xD7AF) ||
+			(r >= 0x0600 && r <= 0x06FF) {
+			return true
+		}
+	}
+	return false
+}
+
 // ResolveDownloadFilename returns a clean, human-readable audio filename
-// matching the [original | english.ext] or [Title.ext] naming convention.
+// matching the [title | english.ext] or [Title.ext] naming convention.
 func ResolveDownloadFilename(song *database.Song, meta *metadata.SongMetadata) string {
 	format := song.Format
 	if format == "" {
@@ -142,22 +165,69 @@ func ResolveDownloadFilename(song *database.Song, meta *metadata.SongMetadata) s
 
 	var baseName string
 	if meta != nil {
-		if meta.EnglishTitle != "" && !strings.EqualFold(meta.EnglishTitle, meta.Title) {
-			baseName = fmt.Sprintf("(%s) | (%s)", meta.Title, meta.EnglishTitle)
-		} else if meta.Title != "" {
-			baseName = meta.Title
+		title := cleanTitlePart(meta.Title)
+		eng := cleanTitlePart(meta.EnglishTitle)
+		if eng != "" && title != "" && !strings.EqualFold(eng, title) {
+			baseName = fmt.Sprintf("%s | %s", title, eng)
+		} else if title != "" {
+			if strings.Contains(title, "|") {
+				parts := strings.SplitN(title, "|", 2)
+				t0 := cleanTitlePart(parts[0])
+				t1 := cleanTitlePart(parts[1])
+				if t0 != "" && t1 != "" && !strings.EqualFold(t0, t1) {
+					baseName = fmt.Sprintf("%s | %s", t0, t1)
+				} else {
+					baseName = title
+				}
+			} else if hasNonLatin(title) && song.OriginalName != "" {
+				cleanOrig := strings.TrimSuffix(song.OriginalName, filepath.Ext(song.OriginalName))
+				cleanOrig = regexp.MustCompile(`_\d{10,}$`).ReplaceAllString(cleanOrig, "")
+				cleanOrig = strings.ReplaceAll(cleanOrig, "_", " ")
+				cleanOrig = cleanTitlePart(cleanOrig)
+				if cleanOrig != "" && !hasNonLatin(cleanOrig) && !strings.EqualFold(cleanOrig, title) {
+					baseName = fmt.Sprintf("%s | %s", title, cleanOrig)
+				} else {
+					baseName = title
+				}
+			} else {
+				baseName = title
+			}
 		}
 	}
 
 	if baseName == "" && song.OriginalName != "" {
-		baseName = strings.TrimSuffix(song.OriginalName, filepath.Ext(song.OriginalName))
+		raw := strings.TrimSuffix(song.OriginalName, filepath.Ext(song.OriginalName))
+		if strings.Contains(raw, "|") {
+			parts := strings.SplitN(raw, "|", 2)
+			t0 := cleanTitlePart(parts[0])
+			t1 := cleanTitlePart(parts[1])
+			if t0 != "" && t1 != "" && !strings.EqualFold(t0, t1) {
+				baseName = fmt.Sprintf("%s | %s", t0, t1)
+			} else {
+				baseName = raw
+			}
+		} else {
+			baseName = raw
+		}
 	}
 
 	if baseName == "" && song.Filename != "" {
-		baseName = strings.TrimSuffix(song.Filename, filepath.Ext(song.Filename))
+		raw := strings.TrimSuffix(song.Filename, filepath.Ext(song.Filename))
 		// Strip server timestamp suffixes if present (e.g. _1726859384938)
 		re := regexp.MustCompile(`_\d{10,}$`)
-		baseName = re.ReplaceAllString(baseName, "")
+		raw = re.ReplaceAllString(raw, "")
+		if strings.Contains(raw, "|") {
+			parts := strings.SplitN(raw, "|", 2)
+			t0 := cleanTitlePart(parts[0])
+			t1 := cleanTitlePart(parts[1])
+			if t0 != "" && t1 != "" && !strings.EqualFold(t0, t1) {
+				baseName = fmt.Sprintf("%s | %s", t0, t1)
+			} else {
+				baseName = raw
+			}
+		} else {
+			baseName = raw
+		}
 	}
 
 	if baseName == "" {

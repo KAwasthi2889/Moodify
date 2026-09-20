@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -852,6 +853,7 @@ type SongWithDetails struct {
 	Album         string    `json:"album,omitempty"`
 	Genre         string    `json:"genre,omitempty"`
 	InferredGenre string    `json:"inferred_genre,omitempty"`
+	EnglishTitle  string    `json:"english_title,omitempty"`
 	Year          int       `json:"year,omitempty"`
 	ReleaseYear   int       `json:"release_year,omitempty"`
 	Fingerprint   string    `json:"fingerprint,omitempty"`
@@ -860,8 +862,10 @@ type SongWithDetails struct {
 	MatchedMoods  []string  `json:"matched_moods,omitempty"`
 	DurationSec   float32   `json:"duration_sec,omitempty"`
 	TempoBPM      float32   `json:"tempo_bpm,omitempty"`
-	HasFeatures   bool      `json:"has_features"`
-	HasLyrics     bool      `json:"has_lyrics"`
+	HasFeatures        bool      `json:"has_features"`
+	HasLyrics          bool      `json:"has_lyrics"`
+	ExtensionCorrected bool      `json:"extension_corrected,omitempty"`
+	FormatWarning      string    `json:"format_warning,omitempty"`
 }
 
 // ListSongs retrieves songs with pagination and details, optionally filtered by session or status.
@@ -888,6 +892,7 @@ func (db *DB) ListSongs(ctx context.Context, sessionID, status string, limit, of
 		SELECT 
 			s.id, s.session_id, s.filename, s.original_name, s.format, s.file_size, s.status, s.uploaded_at,
 			COALESCE(m.title, ''), COALESCE(m.artist, ''), COALESCE(m.album, ''), COALESCE(m.genre, ''), COALESCE(m.inferred_genre, ''),
+			COALESCE(m.english_title, ''),
 			COALESCE(m.release_year, 0),
 			COALESCE(m.fingerprint, ''),
 			COALESCE(sf.matched_moods, '{}'), COALESCE(sf.duration_sec, 0.0), COALESCE(sf.tempo_bpm, 0.0),
@@ -913,6 +918,7 @@ func (db *DB) ListSongs(ctx context.Context, sessionID, status string, limit, of
 		if err := rows.Scan(
 			&swd.ID, &swd.SessionID, &swd.Filename, &swd.OriginalName, &swd.Format, &swd.SizeBytes, &swd.Status, &swd.UploadedAt,
 			&swd.Title, &swd.Artist, &swd.Album, &swd.Genre, &swd.InferredGenre,
+			&swd.EnglishTitle,
 			&swd.Year,
 			&swd.Fingerprint,
 			&swd.MatchedMoods, &swd.DurationSec, &swd.TempoBPM,
@@ -927,6 +933,14 @@ func (db *DB) ListSongs(ctx context.Context, sessionID, status string, limit, of
 	// Detect duplicates based on title + artist + fingerprint (or identical fingerprint)
 	seen := make(map[string]uuid.UUID)
 	for _, s := range songs {
+		// Detect if original uploaded filename extension differed from true detected format
+		ext := strings.TrimPrefix(filepath.Ext(s.OriginalName), ".")
+		extFormat := audio.ExtensionToFormat(strings.ToLower(ext))
+		if extFormat != "" && s.Format != "" && string(extFormat) != s.Format {
+			s.ExtensionCorrected = true
+			s.FormatWarning = fmt.Sprintf("File uploaded with extension '.%s', but detected as '%s'", ext, strings.ToUpper(s.Format))
+		}
+
 		var key string
 		if s.Fingerprint != "" {
 			key = "fp:" + s.Fingerprint
@@ -956,6 +970,7 @@ func (db *DB) GetSongsForPlaylist(ctx context.Context, sessionID, mood, genre st
 		SELECT 
 			s.id, s.session_id, s.filename, s.original_name, s.format, s.file_size, s.status, s.uploaded_at,
 			COALESCE(m.title, ''), COALESCE(m.artist, ''), COALESCE(m.album, ''), COALESCE(m.genre, ''), COALESCE(m.inferred_genre, ''),
+			COALESCE(m.english_title, ''),
 			COALESCE(sf.matched_moods, '{}'), COALESCE(sf.duration_sec, 0.0), COALESCE(sf.tempo_bpm, 0.0),
 			(sf.id IS NOT NULL) AS has_features,
 			(sl.id IS NOT NULL) AS has_lyrics
@@ -980,6 +995,7 @@ func (db *DB) GetSongsForPlaylist(ctx context.Context, sessionID, mood, genre st
 		if err := rows.Scan(
 			&swd.ID, &swd.SessionID, &swd.Filename, &swd.OriginalName, &swd.Format, &swd.SizeBytes, &swd.Status, &swd.UploadedAt,
 			&swd.Title, &swd.Artist, &swd.Album, &swd.Genre, &swd.InferredGenre,
+			&swd.EnglishTitle,
 			&swd.MatchedMoods, &swd.DurationSec, &swd.TempoBPM,
 			&swd.HasFeatures, &swd.HasLyrics,
 		); err != nil {

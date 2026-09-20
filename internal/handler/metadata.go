@@ -186,12 +186,37 @@ func RenameSong(db *database.DB, store storage.FileStore) http.HandlerFunc {
 
 		// Compute title-only base name
 		var baseName string
-		if meta.EnglishTitle != "" && !strings.EqualFold(meta.EnglishTitle, meta.Title) {
-			baseName = fmt.Sprintf("(%s) | (%s)", meta.Title, meta.EnglishTitle)
-		} else if meta.Title != "" {
-			baseName = meta.Title
+		cleanTitle := cleanTitlePart(meta.Title)
+		cleanEng := cleanTitlePart(meta.EnglishTitle)
+		if cleanEng != "" && cleanTitle != "" && !strings.EqualFold(cleanEng, cleanTitle) {
+			baseName = fmt.Sprintf("%s | %s", cleanTitle, cleanEng)
+		} else if cleanTitle != "" {
+			if strings.Contains(cleanTitle, "|") {
+				parts := strings.SplitN(cleanTitle, "|", 2)
+				t0 := cleanTitlePart(parts[0])
+				t1 := cleanTitlePart(parts[1])
+				if t0 != "" && t1 != "" && !strings.EqualFold(t0, t1) {
+					baseName = fmt.Sprintf("%s | %s", t0, t1)
+				} else {
+					baseName = cleanTitle
+				}
+			} else {
+				baseName = cleanTitle
+			}
 		} else {
-			baseName = strings.TrimSuffix(song.OriginalName, filepath.Ext(song.OriginalName))
+			raw := strings.TrimSuffix(song.OriginalName, filepath.Ext(song.OriginalName))
+			if strings.Contains(raw, "|") {
+				parts := strings.SplitN(raw, "|", 2)
+				t0 := cleanTitlePart(parts[0])
+				t1 := cleanTitlePart(parts[1])
+				if t0 != "" && t1 != "" && !strings.EqualFold(t0, t1) {
+					baseName = fmt.Sprintf("%s | %s", t0, t1)
+				} else {
+					baseName = raw
+				}
+			} else {
+				baseName = raw
+			}
 		}
 
 		baseName = sanitizeFilename(baseName)

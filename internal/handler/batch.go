@@ -101,6 +101,14 @@ func BatchUpload(db *database.DB, store storage.FileStore, maxFileSizeMB int) ht
 			headerBytes = headerBytes[:n]
 
 			detectedFormat := audio.DetectFormat(headerBytes)
+			ext := strings.TrimPrefix(filepath.Ext(filename), ".")
+			extFormat := audio.ExtensionToFormat(strings.ToLower(ext))
+
+			// If magic bytes could not identify format, fall back to file extension
+			if detectedFormat == "" {
+				detectedFormat = extFormat
+			}
+
 			if detectedFormat == "" {
 				failures = append(failures, uploadError{
 					Filename: filename,
@@ -111,13 +119,9 @@ func BatchUpload(db *database.DB, store storage.FileStore, maxFileSizeMB int) ht
 			}
 
 			// Detect if uploaded file extension differs from true audio magic bytes
-			ext := strings.TrimPrefix(filepath.Ext(filename), ".")
-			extFormat := audio.ExtensionToFormat(strings.ToLower(ext))
-			hasExtMismatch := extFormat != "" && extFormat != detectedFormat
-			originalName := filename
+			hasExtMismatch := extFormat != "" && detectedFormat != "" && extFormat != detectedFormat
 			var formatWarning string
 			if hasExtMismatch {
-				originalName = strings.TrimSuffix(filename, filepath.Ext(filename)) + "." + string(detectedFormat)
 				formatWarning = fmt.Sprintf("File '%s' was uploaded with extension '.%s', but detected as '%s'. Format updated to '%s'.", filename, ext, detectedFormat, strings.ToUpper(string(detectedFormat)))
 			}
 
@@ -140,7 +144,7 @@ func BatchUpload(db *database.DB, store storage.FileStore, maxFileSizeMB int) ht
 			song := &database.Song{
 				SessionID:    sessionID,
 				Filename:     storedName,
-				OriginalName: originalName,
+				OriginalName: filename, // Preserve authentic uploaded filename with its original extension!
 				Format:       string(detectedFormat),
 				FilePath:     savedPath,
 				SizeBytes:    actualSizeBytes,
@@ -157,7 +161,7 @@ func BatchUpload(db *database.DB, store storage.FileStore, maxFileSizeMB int) ht
 			successes = append(successes, uploadedSong{
 				ID:                 song.ID,
 				Filename:           storedName,
-				OriginalName:       originalName,
+				OriginalName:       song.OriginalName,
 				Format:             string(detectedFormat),
 				SizeBytes:          song.SizeBytes,
 				Status:             song.Status,

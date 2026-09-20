@@ -413,7 +413,7 @@ function renderActivePlayer(track) {
             <div class="player-title" title="${escapeHtml(MoodifyAPI.getCleanTitle(track))}">${escapeHtml(MoodifyAPI.getCleanTitle(track))}</div>
             <div class="player-artist-row">
               <span class="player-artist">${escapeHtml(track.artist || 'Unknown Artist')}</span>
-              <span class="badge-format">${(track.format || 'mp3').toUpperCase()}</span>
+              <span class="badge-format ${MoodifyAPI.isFormatCorrected(track) ? 'format-corrected' : ''}" title="${escapeHtml(MoodifyAPI.isFormatCorrected(track) ? `Detected & auto-corrected format: ${track.format}` : `Format: ${track.format}`)}">${(track.format || 'mp3').toUpperCase()}</span>
             </div>
           </div>
         </div>

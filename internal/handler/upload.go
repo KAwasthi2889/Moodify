@@ -50,17 +50,23 @@ func Upload(db *database.DB, store storage.FileStore) http.HandlerFunc {
 			sessionID = uuid.New().String()
 		}
 
-		// Read the first 12 bytes for magic byte detection.
-		headerBytes := make([]byte, 12)
+		// Read up to 512 bytes for magic byte detection.
+		headerBytes := make([]byte, 512)
 		n, err := io.ReadFull(file, headerBytes)
-		if err != nil && err != io.ErrUnexpectedEOF {
+		if err != nil && err != io.ErrUnexpectedEOF && err != io.EOF {
 			respondError(w, http.StatusBadRequest, "unable to read file header")
 			return
 		}
 		headerBytes = headerBytes[:n]
 
-		// Detect true format from magic bytes.
+		// Detect true format from magic bytes, fallback to extension if needed.
 		detectedFormat := audio.DetectFormat(headerBytes)
+		ext := strings.TrimPrefix(filepath.Ext(header.Filename), ".")
+		extFormat := audio.ExtensionToFormat(strings.ToLower(ext))
+		if detectedFormat == "" {
+			detectedFormat = extFormat
+		}
+
 		if detectedFormat == "" {
 			respondError(w, http.StatusBadRequest,
 				"unsupported audio format: file must be MP3, M4A, FLAC, WAV, or OPUS")
@@ -68,9 +74,7 @@ func Upload(db *database.DB, store storage.FileStore) http.HandlerFunc {
 		}
 
 		// Check extension vs detected format; log warning if mismatch.
-		ext := strings.TrimPrefix(filepath.Ext(header.Filename), ".")
-		extFormat := audio.ExtensionToFormat(strings.ToLower(ext))
-		hasExtMismatch := extFormat != "" && extFormat != detectedFormat
+		hasExtMismatch := extFormat != "" && detectedFormat != "" && extFormat != detectedFormat
 		correctedName := strings.TrimSuffix(header.Filename, filepath.Ext(header.Filename)) + "." + string(detectedFormat)
 
 		if hasExtMismatch {

@@ -1207,6 +1207,14 @@
   border-radius: 4px;
   background: rgba(255, 255, 255, 0.08);
   color: var(--color-text-muted);
+  transition: all 0.2s ease;
+}
+.badge-format.format-corrected {
+  border: 1px solid rgba(16, 185, 129, 0.6) !important;
+  color: #10b981 !important;
+  background: rgba(16, 185, 129, 0.2) !important;
+  box-shadow: 0 0 10px rgba(16, 185, 129, 0.3) !important;
+  font-weight: 700 !important;
 }
 
 /* Player Center Controls */

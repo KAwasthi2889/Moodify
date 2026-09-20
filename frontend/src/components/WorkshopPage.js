@@ -219,7 +219,7 @@ export async function renderWorkshopPage(container, onNavigate) {
                     const displayTitle = MoodifyAPI.getCleanTitle(song);
                     const displayArtist = song.artist || 'Unknown Artist';
                     const format = (song.format || 'mp3').toUpperCase();
-                    const isFormatCorrected = Boolean(song.extension_corrected || song.format_warning);
+                    const isFormatCorrected = MoodifyAPI.isFormatCorrected(song);
                     const sizeMb = song.size_bytes ? (song.size_bytes / (1024 * 1024)).toFixed(1) + ' MB' : '—';
                     const isSelected = selectedSongIds.has(song.id);
                     const isReady = status === 'ready';
@@ -684,6 +684,7 @@ export async function renderWorkshopPage(container, onNavigate) {
               uploadedSongs[idx].album = topMatch.album || uploadedSongs[idx].album || '';
               uploadedSongs[idx].year = topMatch.release_year || topMatch.year || uploadedSongs[idx].year || '';
               uploadedSongs[idx].genre = topMatch.genre || topMatch.inferred_genre || uploadedSongs[idx].genre || '';
+              uploadedSongs[idx].english_title = topMatch.english_title || uploadedSongs[idx].english_title || '';
               uploadedSongs[idx].status = 'tagged';
             } else {
               uploadedSongs[idx].status = 'uploaded';
@@ -716,11 +717,14 @@ export async function renderWorkshopPage(container, onNavigate) {
           return {
             ...remote,
             status: localSong.status === 'tagged' ? 'tagged' : remote.status,
+            extension_corrected: localSong.extension_corrected || remote.extension_corrected,
+            format_warning: localSong.format_warning || remote.format_warning,
             title: localSong.title || remote.title,
             artist: localSong.artist || remote.artist,
             album: localSong.album || remote.album,
             year: localSong.year || remote.year,
-            genre: localSong.genre || remote.genre
+            genre: localSong.genre || remote.genre,
+            english_title: remote.english_title || localSong.english_title || ''
           };
         });
       }

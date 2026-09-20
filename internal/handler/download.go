@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 
 	"github.com/go-chi/chi/v5"
@@ -54,7 +55,14 @@ func DownloadSong(db *database.DB) http.HandlerFunc {
 		if r.URL.Query().Get("download") == "true" {
 			disposition = "attachment"
 		}
-		w.Header().Set("Content-Disposition", fmt.Sprintf("%s; filename=%q", disposition, filename))
+		dispHeader := fmt.Sprintf("%s; filename=%q", disposition, filename)
+		for _, ch := range filename {
+			if ch > 127 {
+				dispHeader += fmt.Sprintf("; filename*=UTF-8''%s", url.PathEscape(filename))
+				break
+			}
+		}
+		w.Header().Set("Content-Disposition", dispHeader)
 		w.Header().Set("Accept-Ranges", "bytes")
 
 		// Map explicit audio mime-type if known

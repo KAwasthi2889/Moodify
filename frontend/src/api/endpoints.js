@@ -158,11 +158,39 @@ export const MoodifyAPI = {
    */
   getCleanTitle(song) {
     if (!song) return 'Moodify Track';
-    if (song.english_title && song.title && song.english_title.toLowerCase() !== song.title.toLowerCase()) {
-      return `(${song.title}) | (${song.english_title})`;
+    let title = song.title || '';
+    let englishTitle = song.english_title || '';
+
+    // If englishTitle not directly available, check if title or original_name contains '|'
+    if (!englishTitle && title.includes('|')) {
+      const parts = title.split('|').map(p => p.trim().replace(/^\((.*)\)$/, '$1').trim());
+      if (parts.length >= 2 && parts[0] && parts[1]) {
+        title = parts[0];
+        englishTitle = parts[1];
+      }
+    } else if (!englishTitle && song.original_name && song.original_name.includes('|')) {
+      const baseOrig = song.original_name.replace(/\.[^/.]+$/, '');
+      const parts = baseOrig.split('|').map(p => p.trim().replace(/^\((.*)\)$/, '$1').trim());
+      if (parts.length >= 2 && parts[0] && parts[1]) {
+        title = title || parts[0];
+        englishTitle = parts[1];
+      }
+    } else if (!englishTitle && /[\u0400-\u04FF\u4E00-\u9FFF\u3040-\u30FF\uAC00-\uD7AF\u0600-\u06FF]/.test(title) && song.original_name) {
+      // If title is non-Latin script (Cyrillic, CJK, etc.) and original uploaded filename is Latin/English
+      const cleanOrig = song.original_name.replace(/\.[^/.]+$/, '').replace(/_\d{10,}.*$/, '').replace(/_/g, ' ').trim();
+      if (/^[a-zA-Z0-9\s\-'.&]+$/.test(cleanOrig) && !/^(track|audio|unknown|untitled)\b/i.test(cleanOrig) && cleanOrig.toLowerCase() !== title.toLowerCase()) {
+        englishTitle = cleanOrig;
+      }
     }
-    if (song.title) {
-      return song.title;
+
+    const cleanTitle = (title || '').trim().replace(/^\((.*)\)$/, '$1').trim();
+    const cleanEng = (englishTitle || '').trim().replace(/^\((.*)\)$/, '$1').trim();
+
+    if (cleanEng && cleanTitle && cleanEng.toLowerCase() !== cleanTitle.toLowerCase()) {
+      return `${cleanTitle} | ${cleanEng}`;
+    }
+    if (cleanTitle) {
+      return cleanTitle;
     }
     if (song.original_name) {
       return song.original_name.replace(/\.[^/.]+$/, '');
@@ -175,16 +203,43 @@ export const MoodifyAPI = {
   },
 
   /**
-   * Resolves a clean filename matching [original | english.ext] or [Title.ext].
+   * Resolves a clean filename matching [title | english.ext] or [Title.ext].
    */
   getCleanFilename(song) {
     if (!song) return 'track.mp3';
     const format = (song.format || 'mp3').toLowerCase();
-    if (song.english_title && song.title && song.english_title.toLowerCase() !== song.title.toLowerCase()) {
-      return `(${song.title}) | (${song.english_title}).${format}`;
+    let title = song.title || '';
+    let englishTitle = song.english_title || '';
+
+    if (!englishTitle && title.includes('|')) {
+      const parts = title.split('|').map(p => p.trim().replace(/^\((.*)\)$/, '$1').trim());
+      if (parts.length >= 2 && parts[0] && parts[1]) {
+        title = parts[0];
+        englishTitle = parts[1];
+      }
+    } else if (!englishTitle && song.original_name && song.original_name.includes('|')) {
+      const baseOrig = song.original_name.replace(/\.[^/.]+$/, '');
+      const parts = baseOrig.split('|').map(p => p.trim().replace(/^\((.*)\)$/, '$1').trim());
+      if (parts.length >= 2 && parts[0] && parts[1]) {
+        title = title || parts[0];
+        englishTitle = parts[1];
+      }
+    } else if (!englishTitle && /[\u0400-\u04FF\u4E00-\u9FFF\u3040-\u30FF\uAC00-\uD7AF\u0600-\u06FF]/.test(title) && song.original_name) {
+      // If title is non-Latin script (Cyrillic, CJK, etc.) and original uploaded filename is Latin/English
+      const cleanOrig = song.original_name.replace(/\.[^/.]+$/, '').replace(/_\d{10,}.*$/, '').replace(/_/g, ' ').trim();
+      if (/^[a-zA-Z0-9\s\-'.&]+$/.test(cleanOrig) && !/^(track|audio|unknown|untitled)\b/i.test(cleanOrig) && cleanOrig.toLowerCase() !== title.toLowerCase()) {
+        englishTitle = cleanOrig;
+      }
     }
-    if (song.title) {
-      return `${song.title}.${format}`;
+
+    const cleanTitle = (title || '').trim().replace(/^\((.*)\)$/, '$1').trim();
+    const cleanEng = (englishTitle || '').trim().replace(/^\((.*)\)$/, '$1').trim();
+
+    if (cleanEng && cleanTitle && cleanEng.toLowerCase() !== cleanTitle.toLowerCase()) {
+      return `${cleanTitle} | ${cleanEng}.${format}`;
+    }
+    if (cleanTitle) {
+      return `${cleanTitle}.${format}`;
     }
     if (song.original_name) {
       const base = song.original_name.replace(/\.[^/.]+$/, '');
@@ -275,6 +330,28 @@ export const MoodifyAPI = {
     }
 
     return false;
+  },
+
+  /**
+   * Checks if a song had its format auto-corrected (e.g. extension mismatch vs detected magic bytes)
+   */
+  isFormatCorrected(song) {
+    if (!song) return false;
+    if (song.extension_corrected || song.format_warning) return true;
+    if (!song.original_name || !song.format) return false;
+    const match = song.original_name.match(/\.([a-zA-Z0-9]+)$/);
+    if (!match) return false;
+    const origExt = match[1].toLowerCase();
+    const format = song.format.toLowerCase();
+    const extToFmt = {
+      'mp3': 'mp3',
+      'm4a': 'm4a', 'aac': 'm4a', 'mp4': 'm4a',
+      'wav': 'wav',
+      'flac': 'flac',
+      'opus': 'opus', 'ogg': 'opus'
+    };
+    const expectedFmt = extToFmt[origExt];
+    return Boolean(expectedFmt && expectedFmt !== format);
   }
 };
 

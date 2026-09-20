@@ -15,13 +15,23 @@ export function openMetadataModal(song, onSaved) {
   modalContainer.className = 'modal-overlay';
   modalContainer.id = 'metadata-modal-overlay';
 
-  const title = song.title || song.original_name || song.filename || '';
+  let title = song.title || song.original_name || song.filename || '';
+  let englishTitle = song.english_title || '';
+
+  if (!englishTitle && title.includes('|')) {
+    const parts = title.split('|').map(p => p.trim().replace(/^\((.*)\)$/, '$1').trim());
+    if (parts.length >= 2 && parts[0] && parts[1]) {
+      title = parts[0];
+      englishTitle = parts[1];
+    }
+  }
+
   const artist = song.artist || '';
   const album = song.album || '';
   const year = song.year || song.release_year || '';
   const genre = song.genre || song.inferred_genre || '';
   const format = (song.format || 'mp3').toUpperCase();
-  const isFormatCorrected = Boolean(song.extension_corrected || song.format_warning);
+  const isFormatCorrected = MoodifyAPI.isFormatCorrected(song);
 
   modalContainer.innerHTML = `
     <div class="modal-card" id="metadata-modal-card">
@@ -39,9 +49,15 @@ export function openMetadataModal(song, onSaved) {
       </div>
 
       <form class="metadata-form" id="metadata-form">
-        <div class="form-group">
-          <label class="form-label" for="meta-title">Track Title</label>
-          <input class="form-input" id="meta-title" type="text" value="${escapeHtml(title)}" placeholder="e.g. Midnight City" required />
+        <div class="form-row">
+          <div class="form-group flex-1">
+            <label class="form-label" for="meta-title">Track Title</label>
+            <input class="form-input" id="meta-title" type="text" value="${escapeHtml(title)}" placeholder="e.g. Midnight City" required />
+          </div>
+          <div class="form-group flex-1">
+            <label class="form-label" for="meta-english-title">English Title / Translation (Optional)</label>
+            <input class="form-input" id="meta-english-title" type="text" value="${escapeHtml(englishTitle)}" placeholder="e.g. Saffron (for Kesariya)" />
+          </div>
         </div>
 
         <div class="form-row">
@@ -93,6 +109,7 @@ export function openMetadataModal(song, onSaved) {
       if (!res) return;
       const meta = res.metadata || res;
       const titleIn = modalContainer.querySelector('#meta-title');
+      const englishTitleIn = modalContainer.querySelector('#meta-english-title');
       const artistIn = modalContainer.querySelector('#meta-artist');
       const albumIn = modalContainer.querySelector('#meta-album');
       const yearIn = modalContainer.querySelector('#meta-year');
@@ -100,6 +117,9 @@ export function openMetadataModal(song, onSaved) {
 
       if (meta.title && titleIn && (!titleIn.value || titleIn.value === song.original_name || titleIn.value === song.filename)) {
         titleIn.value = meta.title;
+      }
+      if (meta.english_title && englishTitleIn && !englishTitleIn.value) {
+        englishTitleIn.value = meta.english_title;
       }
       if (meta.artist && artistIn && !artistIn.value) {
         artistIn.value = meta.artist;
@@ -142,6 +162,7 @@ export function openMetadataModal(song, onSaved) {
 
     const updatedData = {
       title: modalContainer.querySelector('#meta-title').value.trim(),
+      english_title: modalContainer.querySelector('#meta-english-title')?.value.trim() || '',
       artist: modalContainer.querySelector('#meta-artist').value.trim(),
       album: modalContainer.querySelector('#meta-album').value.trim(),
       year: parseInt(modalContainer.querySelector('#meta-year').value.trim(), 10) || 0,

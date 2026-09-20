@@ -16,6 +16,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/KAwasthi2889/Moodify/internal/database"
+	"github.com/KAwasthi2889/Moodify/internal/metadata"
 )
 
 func TestBatchDownload(t *testing.T) {
@@ -122,5 +123,102 @@ func TestBatchDownload(t *testing.T) {
 
 	if !foundNames["Song_One.mp3"] && !foundNames["Song One.mp3"] {
 		t.Errorf("expected Song One.mp3 in zip, found: %v", foundNames)
+	}
+}
+
+func TestResolveDownloadFilename_DualLanguage(t *testing.T) {
+	tests := []struct {
+		name     string
+		song     *database.Song
+		meta     *metadata.SongMetadata
+		expected string
+	}{
+		{
+			name: "distinct english title",
+			song: &database.Song{Format: "mp3"},
+			meta: &metadata.SongMetadata{
+				Title:        "Kesariya",
+				EnglishTitle: "Saffron",
+			},
+			expected: "Kesariya | Saffron.mp3",
+		},
+		{
+			name: "enclosing parentheses stripped",
+			song: &database.Song{Format: "mp3"},
+			meta: &metadata.SongMetadata{
+				Title:        "(Kesariya)",
+				EnglishTitle: "(Saffron)",
+			},
+			expected: "Kesariya | Saffron.mp3",
+		},
+		{
+			name: "pipe already in title",
+			song: &database.Song{Format: "m4a"},
+			meta: &metadata.SongMetadata{
+				Title:        "Tum Hi Ho | You Are The One",
+				EnglishTitle: "",
+			},
+			expected: "Tum Hi Ho | You Are The One.m4a",
+		},
+		{
+			name: "pipe in original filename fallback",
+			song: &database.Song{
+				Format:       "flac",
+				OriginalName: "Alag Aasmaan | Different Sky.flac",
+			},
+			meta:     nil,
+			expected: "Alag Aasmaan | Different Sky.flac",
+		},
+		{
+			name: "english song without dual language",
+			song: &database.Song{Format: "mp3"},
+			meta: &metadata.SongMetadata{
+				Title:        "Midnight City",
+				EnglishTitle: "",
+			},
+			expected: "Midnight City.mp3",
+		},
+		{
+			name: "identical title and english title",
+			song: &database.Song{Format: "wav"},
+			meta: &metadata.SongMetadata{
+				Title:        "Hello",
+				EnglishTitle: "Hello",
+			},
+			expected: "Hello.wav",
+		},
+		{
+			name: "non-Latin cyrillic title with Latin original name",
+			song: &database.Song{
+				Format:       "m4a",
+				OriginalName: "Bare_Minimum_1789942704899860346.m4a",
+			},
+			meta: &metadata.SongMetadata{
+				Title:        "Базовый минимум",
+				EnglishTitle: "",
+			},
+			expected: "Базовый минимум | Bare Minimum.m4a",
+		},
+		{
+			name: "hindi song in Latin script remains unchanged",
+			song: &database.Song{
+				Format:       "mp3",
+				OriginalName: "Bandeya.mp3",
+			},
+			meta: &metadata.SongMetadata{
+				Title:        "Bandeya",
+				EnglishTitle: "",
+			},
+			expected: "Bandeya.mp3",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := ResolveDownloadFilename(tc.song, tc.meta)
+			if got != tc.expected {
+				t.Errorf("ResolveDownloadFilename() = %q, want %q", got, tc.expected)
+			}
+		})
 	}
 }

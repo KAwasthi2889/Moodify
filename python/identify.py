@@ -75,6 +75,22 @@ def extract_mutagen_fallback(file_path: str) -> Optional[Dict[str, Any]]:
         if not title and not artist:
             return None
 
+        english_title = ""
+        suggested_filename = title or os.path.splitext(os.path.basename(file_path))[0]
+        if "|" in title:
+            parts = [p.strip().strip("()") for p in title.split("|", 1)]
+            if len(parts) == 2 and parts[0] and parts[1]:
+                title = parts[0]
+                english_title = parts[1]
+                suggested_filename = f"{title} | {english_title}"
+        elif not title and "|" in os.path.splitext(os.path.basename(file_path))[0]:
+            raw_base = os.path.splitext(os.path.basename(file_path))[0]
+            parts = [p.strip().strip("()") for p in raw_base.split("|", 1)]
+            if len(parts) == 2 and parts[0] and parts[1]:
+                title = parts[0]
+                english_title = parts[1]
+                suggested_filename = f"{title} | {english_title}"
+
         return {
             "source": "embedded_tags",
             "acoustid_score": 0.0,
@@ -86,8 +102,8 @@ def extract_mutagen_fallback(file_path: str) -> Optional[Dict[str, Any]]:
             "release_year": year,
             "genre": get_tag("genre"),
             "track_number": 0,
-            "english_title": "",
-            "suggested_filename": title or os.path.splitext(os.path.basename(file_path))[0],
+            "english_title": english_title,
+            "suggested_filename": suggested_filename,
         }
     except Exception:
         return None
@@ -217,11 +233,39 @@ def identify_song(file_path: str, api_key: str) -> Dict[str, Any]:
             # Check for English alias / transliteration
             english_title = find_english_alias(recording_info)
 
-            # Dual-language naming convention: (Original) | (English)
-            if english_title and english_title.lower() != title.lower():
-                suggested_filename = f"({title}) | ({english_title})"
+            # If no MusicBrainz alias exists, check if title is in a non-Latin script (Cyrillic, CJK, etc.)
+            has_non_latin = any(
+                '\u0400' <= char <= '\u04FF' or # Cyrillic
+                '\u4E00' <= char <= '\u9FFF' or # CJK
+                '\u3040' <= char <= '\u30FF' or # Hiragana/Katakana
+                '\uAC00' <= char <= '\uD7AF' or # Hangul
+                '\u0600' <= char <= '\u06FF'    # Arabic
+                for char in title
+            )
+
+            if not english_title and has_non_latin:
+                # 1. Check if original uploaded filename was in Latin/English
+                raw_orig = os.path.splitext(os.path.basename(file_path))[0]
+                cleaned_orig = re.sub(r'_\d{10,}.*$', '', raw_orig).replace('_', ' ').strip()
+                if cleaned_orig and all(ord(c) < 128 for c in cleaned_orig) and not any(kw in cleaned_orig.lower() for kw in ("track", "audio", "unknown", "untitled")):
+                    english_title = cleaned_orig
+                else:
+                    # 2. Translate non-Latin title via GoogleTranslator fallback
+                    try:
+                        from deep_translator import GoogleTranslator
+                        tr = GoogleTranslator(source="auto", target="en").translate(title)
+                        if tr and tr.lower() != title.lower():
+                            english_title = tr.strip()
+                    except Exception:
+                        pass
+
+            # Dual-language naming convention: Title | English
+            clean_title = title.strip().strip("()")
+            clean_eng = english_title.strip().strip("()")
+            if clean_eng and clean_eng.lower() != clean_title.lower():
+                suggested_filename = f"{clean_title} | {clean_eng}"
             else:
-                suggested_filename = title
+                suggested_filename = clean_title
 
             match_entry = {
                 "source": "acoustid",

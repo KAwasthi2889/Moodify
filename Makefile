@@ -5,6 +5,10 @@
 dev:
 	go run ./cmd/server
 
+# Start both Backend and Frontend concurrently with one command
+dev-all:
+	@(trap 'kill 0' SIGINT; go run ./cmd/server & (cd frontend && npm run dev))
+
 build:
 	go build -o bin/moodify ./cmd/server
 

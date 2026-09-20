@@ -38,11 +38,17 @@ func (s *Server) routes() http.Handler {
 		r.Get("/songs/{id}/lyrics", handler.GetSongLyrics(s.db))
 		r.Get("/songs/clusters", handler.GetMoodClusters(s.db))
 		r.Get("/songs/{id}/similar", handler.GetSimilarSongs(s.db))
-		r.Get("/songs/{id}/download", handler.DownloadSong(s.db))
+		r.Get("/songs", handler.ListSongs(s.db))
+		r.Post("/songs/batch/upload", handler.BatchUpload(s.db, s.store, s.maxFileSizeMB))
+		r.Post("/songs/batch/analyze", handler.BatchAnalyze(s.db, s.queue))
+		r.Get("/songs/batch/status", handler.GetBatchStatus(s.db, s.queue))
 		r.Delete("/songs/{id}", handler.DeleteSong(s.db, s.store))
 
 		// Session endpoints
 		r.Delete("/sessions/{id}", handler.DeleteSession(s.db, s.store))
+
+		// Curated Playlist endpoints
+		r.Post("/playlists/generate", handler.GeneratePlaylist(s.db))
 	})
 
 	return r

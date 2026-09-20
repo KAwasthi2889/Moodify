@@ -762,3 +762,176 @@ func (db *DB) DeleteExpiredSongs(ctx context.Context, cutoff time.Time) ([]*Song
 	return deleted, rows.Err()
 }
 
+// UpdateSongStatus updates the processing status of a song record.
+func (db *DB) UpdateSongStatus(ctx context.Context, id uuid.UUID, status string) error {
+	ct, err := db.Pool.Exec(ctx, `
+		UPDATE songs
+		SET status = $1
+		WHERE id = $2
+	`, status, id)
+	if err != nil {
+		return fmt.Errorf("update song %s status to %s: %w", id, status, err)
+	}
+	if ct.RowsAffected() == 0 {
+		return fmt.Errorf("update song %s status: %w", id, pgx.ErrNoRows)
+	}
+	return nil
+}
+
+// GetUnanalyzedSongs returns up to limit songs that do not yet have extracted audio features.
+func (db *DB) GetUnanalyzedSongs(ctx context.Context, sessionID string, limit int) ([]*Song, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 50
+	}
+
+	rows, err := db.Pool.Query(ctx, `
+		SELECT s.id, s.session_id, s.filename, s.original_name, s.format, s.file_path, s.file_size, s.uploaded_at, s.status
+		FROM songs s
+		LEFT JOIN song_features sf ON s.id = sf.song_id
+		WHERE sf.id IS NULL AND ($1 = '' OR s.session_id = $1)
+		ORDER BY s.uploaded_at ASC
+		LIMIT $2
+	`, sessionID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("query unanalyzed songs: %w", err)
+	}
+	defer rows.Close()
+
+	var songs []*Song
+	for rows.Next() {
+		var s Song
+		if err := rows.Scan(
+			&s.ID, &s.SessionID, &s.Filename, &s.OriginalName, &s.Format,
+			&s.FilePath, &s.SizeBytes, &s.UploadedAt, &s.Status,
+		); err != nil {
+			return nil, fmt.Errorf("scan unanalyzed song: %w", err)
+		}
+		songs = append(songs, &s)
+	}
+	return songs, rows.Err()
+}
+
+// SongWithDetails holds a song together with its enriched metadata, features, and lyrics status.
+type SongWithDetails struct {
+	ID            uuid.UUID `json:"id"`
+	SessionID     string    `json:"session_id"`
+	Filename      string    `json:"filename"`
+	OriginalName  string    `json:"original_name"`
+	Format        string    `json:"format"`
+	SizeBytes     int64     `json:"size_bytes"`
+	Status        string    `json:"status"`
+	UploadedAt    time.Time `json:"uploaded_at"`
+	Title         string    `json:"title,omitempty"`
+	Artist        string    `json:"artist,omitempty"`
+	Album         string    `json:"album,omitempty"`
+	Genre         string    `json:"genre,omitempty"`
+	InferredGenre string    `json:"inferred_genre,omitempty"`
+	MatchedMoods  []string  `json:"matched_moods,omitempty"`
+	DurationSec   float32   `json:"duration_sec,omitempty"`
+	TempoBPM      float32   `json:"tempo_bpm,omitempty"`
+	HasFeatures   bool      `json:"has_features"`
+	HasLyrics     bool      `json:"has_lyrics"`
+}
+
+// ListSongs retrieves songs with pagination and details, optionally filtered by session or status.
+func (db *DB) ListSongs(ctx context.Context, sessionID, status string, limit, offset int) ([]*SongWithDetails, int, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 50
+	}
+	if offset < 0 {
+		offset = 0
+	}
+
+	var total int
+	err := db.Pool.QueryRow(ctx, `
+		SELECT COUNT(*)
+		FROM songs s
+		WHERE ($1 = '' OR s.session_id = $1)
+		  AND ($2 = '' OR s.status = $2)
+	`, sessionID, status).Scan(&total)
+	if err != nil {
+		return nil, 0, fmt.Errorf("count songs: %w", err)
+	}
+
+	rows, err := db.Pool.Query(ctx, `
+		SELECT 
+			s.id, s.session_id, s.filename, s.original_name, s.format, s.file_size, s.status, s.uploaded_at,
+			COALESCE(m.title, ''), COALESCE(m.artist, ''), COALESCE(m.album, ''), COALESCE(m.genre, ''), COALESCE(m.inferred_genre, ''),
+			COALESCE(sf.matched_moods, '{}'), COALESCE(sf.duration_sec, 0.0), COALESCE(sf.tempo_bpm, 0.0),
+			(sf.id IS NOT NULL) AS has_features,
+			(sl.id IS NOT NULL) AS has_lyrics
+		FROM songs s
+		LEFT JOIN song_metadata m ON s.id = m.song_id
+		LEFT JOIN song_features sf ON s.id = sf.song_id
+		LEFT JOIN song_lyrics sl ON s.id = sl.song_id
+		WHERE ($1 = '' OR s.session_id = $1)
+		  AND ($2 = '' OR s.status = $2)
+		ORDER BY s.uploaded_at DESC
+		LIMIT $3 OFFSET $4
+	`, sessionID, status, limit, offset)
+	if err != nil {
+		return nil, 0, fmt.Errorf("query list songs: %w", err)
+	}
+	defer rows.Close()
+
+	var songs []*SongWithDetails
+	for rows.Next() {
+		var swd SongWithDetails
+		if err := rows.Scan(
+			&swd.ID, &swd.SessionID, &swd.Filename, &swd.OriginalName, &swd.Format, &swd.SizeBytes, &swd.Status, &swd.UploadedAt,
+			&swd.Title, &swd.Artist, &swd.Album, &swd.Genre, &swd.InferredGenre,
+			&swd.MatchedMoods, &swd.DurationSec, &swd.TempoBPM,
+			&swd.HasFeatures, &swd.HasLyrics,
+		); err != nil {
+			return nil, 0, fmt.Errorf("scan song with details: %w", err)
+		}
+		songs = append(songs, &swd)
+	}
+	return songs, total, rows.Err()
+}
+
+// GetSongsForPlaylist retrieves analyzed songs matching an optional mood or inferred genre for a session/library.
+func (db *DB) GetSongsForPlaylist(ctx context.Context, sessionID, mood, genre string, limit int) ([]*SongWithDetails, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 20
+	}
+
+	rows, err := db.Pool.Query(ctx, `
+		SELECT 
+			s.id, s.session_id, s.filename, s.original_name, s.format, s.file_size, s.status, s.uploaded_at,
+			COALESCE(m.title, ''), COALESCE(m.artist, ''), COALESCE(m.album, ''), COALESCE(m.genre, ''), COALESCE(m.inferred_genre, ''),
+			COALESCE(sf.matched_moods, '{}'), COALESCE(sf.duration_sec, 0.0), COALESCE(sf.tempo_bpm, 0.0),
+			(sf.id IS NOT NULL) AS has_features,
+			(sl.id IS NOT NULL) AS has_lyrics
+		FROM songs s
+		JOIN song_features sf ON s.id = sf.song_id
+		LEFT JOIN song_metadata m ON s.id = m.song_id
+		LEFT JOIN song_lyrics sl ON s.id = sl.song_id
+		WHERE ($1 = '' OR s.session_id = $1)
+		  AND ($2 = '' OR $2 = ANY(sf.matched_moods) OR array_to_string(sf.matched_moods, ' ') ILIKE '%' || $2 || '%')
+		  AND ($3 = '' OR m.inferred_genre ILIKE '%' || $3 || '%' OR m.genre ILIKE '%' || $3 || '%')
+		ORDER BY sf.tempo_bpm ASC, s.uploaded_at DESC
+		LIMIT $4
+	`, sessionID, mood, genre, limit)
+	if err != nil {
+		return nil, fmt.Errorf("query playlist songs: %w", err)
+	}
+	defer rows.Close()
+
+	var songs []*SongWithDetails
+	for rows.Next() {
+		var swd SongWithDetails
+		if err := rows.Scan(
+			&swd.ID, &swd.SessionID, &swd.Filename, &swd.OriginalName, &swd.Format, &swd.SizeBytes, &swd.Status, &swd.UploadedAt,
+			&swd.Title, &swd.Artist, &swd.Album, &swd.Genre, &swd.InferredGenre,
+			&swd.MatchedMoods, &swd.DurationSec, &swd.TempoBPM,
+			&swd.HasFeatures, &swd.HasLyrics,
+		); err != nil {
+			return nil, fmt.Errorf("scan playlist song: %w", err)
+		}
+		songs = append(songs, &swd)
+	}
+	return songs, rows.Err()
+}
+
+

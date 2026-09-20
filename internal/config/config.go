@@ -22,6 +22,7 @@ type Config struct {
 
 	// Storage & Session Lifecycle
 	UploadDir       string        `env:"UPLOAD_DIR,notEmpty" envDefault:"./uploads"`
+	MaxFileSizeMB   int           `env:"MAX_FILE_SIZE_MB" envDefault:"35"`
 	SessionTTL      time.Duration `env:"SESSION_TTL" envDefault:"24h"`
 	CleanupInterval time.Duration `env:"CLEANUP_INTERVAL" envDefault:"1h"`
 
@@ -34,6 +35,11 @@ type Config struct {
 
 	// AcoustID (Phase 2)
 	AcoustIDAPIKey string `env:"ACOUSTID_API_KEY" envDefault:""`
+
+	// AWS Cloud Services
+	AWSRegion   string `env:"AWS_REGION" envDefault:"us-east-1"`
+	S3Bucket    string `env:"AWS_S3_BUCKET" envDefault:""`
+	SQSQueueURL string `env:"AWS_SQS_QUEUE_URL" envDefault:""`
 }
 
 // Load reads configuration from .env (if present) and process environment variables.

@@ -15,6 +15,7 @@ import (
 	"github.com/KAwasthi2889/Moodify/internal/logging"
 	"github.com/KAwasthi2889/Moodify/internal/lyrics"
 	"github.com/KAwasthi2889/Moodify/internal/metadata"
+	"github.com/KAwasthi2889/Moodify/internal/queue"
 	"github.com/KAwasthi2889/Moodify/internal/server"
 	"github.com/KAwasthi2889/Moodify/internal/storage"
 )
@@ -39,18 +40,13 @@ func main() {
 	}
 	defer db.Close()
 
-	// Initialize file storage.
-	store, err := storage.NewLocalStore(cfg.UploadDir)
+	// Initialize file storage (S3 cloud provider with local fallback).
+	localStore, err := storage.NewLocalStore(cfg.UploadDir)
 	if err != nil {
 		slog.Error("failed to initialize storage", "error", err)
 		os.Exit(1)
 	}
-
-	// Initialize and start background session/file cleaner.
-	cleanerCtx, cancelCleaner := context.WithCancel(context.Background())
-	defer cancelCleaner()
-	cleaner := cleanup.NewCleaner(db, store, cfg.SessionTTL, cfg.CleanupInterval)
-	cleaner.Start(cleanerCtx)
+	store := storage.NewS3Store(cfg.S3Bucket, cfg.AWSRegion, localStore)
 
 	// Initialize sidecar runners.
 	identifier := metadata.NewIdentifier(cfg.PythonBin, "./python/identify.py")
@@ -58,8 +54,21 @@ func main() {
 	az := analyzer.NewAnalyzer(cfg.PythonBin, "./python/analyze.py")
 	lc := lyrics.NewClient(cfg.PythonBin, cfg.LyricsScript, cfg.GeminiAPIKey)
 
+	// Initialize background worker pool and AWS SQS offloading queue.
+	workerCtx, cancelWorker := context.WithCancel(context.Background())
+	defer cancelWorker()
+	workerPool := queue.NewWorkerPoolQueue(db, az, 2, 256)
+	workerPool.Start(workerCtx)
+	asyncQueue := queue.NewSQSQueue(cfg.SQSQueueURL, workerPool)
+
+	// Initialize and start background session/file cleaner.
+	cleanerCtx, cancelCleaner := context.WithCancel(context.Background())
+	defer cancelCleaner()
+	cleaner := cleanup.NewCleaner(db, store, cfg.SessionTTL, cfg.CleanupInterval)
+	cleaner.Start(cleanerCtx)
+
 	// Create and start HTTP server.
-	srv := server.New(cfg.ServerPort, db, store, identifier, embedder, az, lc, cfg.AcoustIDAPIKey)
+	srv := server.New(cfg.ServerPort, db, store, identifier, embedder, az, lc, cfg.AcoustIDAPIKey, asyncQueue, cfg.MaxFileSizeMB)
 
 	// Graceful shutdown on SIGINT/SIGTERM.
 	go func() {
@@ -69,6 +78,7 @@ func main() {
 		slog.Info("received shutdown signal", "signal", sig)
 
 		cancelCleaner()
+		cancelWorker()
 
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()

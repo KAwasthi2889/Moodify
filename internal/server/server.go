@@ -70,3 +70,9 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	slog.Info("shutting down server")
 	return s.httpServer.Shutdown(ctx)
 }
+
+// Handler returns the underlying http.Handler for testing and embedding.
+func (s *Server) Handler() http.Handler {
+	return s.httpServer.Handler
+}
+

@@ -1,0 +1,619 @@
+openapi: 3.0.3
+info:
+  title: Moodify API
+  version: 1.0.0
+  description: |
+    AI-Powered Multimodal Music Intelligence, Continuous Vector Mood Similarity & Cloud-Native Playlist Engineering.
+    Built for high-throughput batch library ingestion, acoustic DSP extraction (Librosa), transformer lyrical sentiment (RoBERTa), and pgvector similarity indexing.
+servers:
+  - url: http://localhost:8080/api/v1
+    description: Local Go API Server
+  - url: /api/v1
+    description: Production Relative Ingress (Nginx / ALB)
+
+paths:
+  /health:
+    get:
+      summary: Health Check
+      description: Verifies API server responsiveness and PostgreSQL database connectivity.
+      responses:
+        '200':
+          description: System healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+                  database:
+                    type: string
+                    example: connected
+
+  /songs/upload:
+    post:
+      summary: Upload Single Audio File
+      description: Uploads a single audio file with magic-byte format detection (MP3, M4A, FLAC, WAV, OPUS).
+      parameters:
+        - in: header
+          name: X-Session-ID
+          required: false
+          schema:
+            type: string
+            format: uuid
+          description: Optional client session ID for tracking and bulk cleanup
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - file
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: Audio track file (max 35 MB)
+      responses:
+        '201':
+          description: Song uploaded successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Song'
+        '400':
+          $ref: '#/components/responses/ErrorResponse'
+
+  /songs/batch/upload:
+    post:
+      summary: Batch Upload Multiple Audio Files
+      description: Streams multi-file audio library ingest directly to storage without memory bloat. Enforces 35MB per file limit.
+      parameters:
+        - in: header
+          name: X-Session-ID
+          required: false
+          schema:
+            type: string
+          description: Session identifier to bind uploaded tracks to
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                files:
+                  type: array
+                  items:
+                    type: string
+                    format: binary
+      responses:
+        '201':
+          description: Batch upload completed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  session_id:
+                    type: string
+                  total_files:
+                    type: integer
+                  uploaded_count:
+                    type: integer
+                  failed_count:
+                    type: integer
+                  songs:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Song'
+                  errors:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        filename:
+                          type: string
+                        error:
+                          type: string
+
+  /songs/batch/analyze:
+    post:
+      summary: Dispatch Batch Analysis
+      description: Offloads unanalyzed tracks to AWS SQS / concurrent worker pool for acoustic DSP and RoBERTa lyrical inference.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                session_id:
+                  type: string
+                song_ids:
+                  type: array
+                  items:
+                    type: string
+                    format: uuid
+      responses:
+        '202':
+          description: Batch analysis accepted and queued
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: queued
+                  message:
+                    type: string
+                  queued_count:
+                    type: integer
+
+  /songs/batch/status:
+    get:
+      summary: Get Batch Processing Status
+      description: Polls real-time queue depth and processing metrics.
+      responses:
+        '200':
+          description: Queue and batch processing metrics
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  queue_length:
+                    type: integer
+                  active_workers:
+                    type: integer
+                  processed_count:
+                    type: integer
+                  failed_count:
+                    type: integer
+
+  /songs:
+    get:
+      summary: List Songs
+      description: Retrieves songs with pagination and mood analysis statuses.
+      parameters:
+        - in: query
+          name: session_id
+          required: false
+          schema:
+            type: string
+        - in: query
+          name: limit
+          required: false
+          schema:
+            type: integer
+            default: 50
+        - in: query
+          name: offset
+          required: false
+          schema:
+            type: integer
+            default: 0
+      responses:
+        '200':
+          description: Paginated list of songs
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  songs:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/SongDetails'
+                  count:
+                    type: integer
+                  limit:
+                    type: integer
+                  offset:
+                    type: integer
+
+  /songs/{id}/download:
+    get:
+      summary: Stream or Download Audio Track
+      description: Serves audio file with HTTP 206 Partial Content (Range requests) for inline streaming, or as an attachment download.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - in: query
+          name: download
+          required: false
+          schema:
+            type: boolean
+            default: false
+          description: Set true to force Content-Disposition attachment download
+      responses:
+        '200':
+          description: Full audio stream
+          headers:
+            Accept-Ranges:
+              schema:
+                type: string
+                example: bytes
+            Content-Disposition:
+              schema:
+                type: string
+                example: inline; filename="track.mp3"
+          content:
+            audio/mpeg:
+              schema:
+                type: string
+                format: binary
+        '206':
+          description: Partial content audio stream for seeking playback
+        '404':
+          $ref: '#/components/responses/ErrorResponse'
+
+  /songs/{id}:
+    delete:
+      summary: Delete Song
+      description: Purges a song, its database records, pgvector embeddings, and underlying storage file.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Song deleted successfully
+        '404':
+          $ref: '#/components/responses/ErrorResponse'
+
+  /songs/{id}/analyze:
+    post:
+      summary: Analyze Single Song
+      description: Synchronously extracts 36-D Librosa DSP acoustic features, infers mood, and upserts pgvector embeddings.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Analysis completed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SongFeatures'
+
+  /songs/{id}/features:
+    get:
+      summary: Get Song Features
+      description: Retrieves stored acoustic features and mood vector.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SongFeatures'
+        '404':
+          $ref: '#/components/responses/ErrorResponse'
+
+  /songs/{id}/lyrics/sync:
+    post:
+      summary: Sync Lyrics & Sentiment
+      description: Fetches synchronized .lrc lyrics from LRCLIB and computes continuous 28-D RoBERTa GoEmotions vector.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Lyrics and sentiment synchronized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LyricsData'
+
+  /songs/{id}/lyrics:
+    get:
+      summary: Get Song Lyrics
+      description: Returns saved synchronized lyrics and emotion distribution.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LyricsData'
+
+  /songs/{id}/similar:
+    get:
+      summary: Find Similar Songs
+      description: Performs pgvector cosine distance nearest-neighbor search across multimodal (64-D), acoustic (36-D), or lyrics (28-D) vectors.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - in: query
+          name: mode
+          required: false
+          schema:
+            type: string
+            enum: [multimodal, acoustic, lyrics]
+            default: multimodal
+        - in: query
+          name: limit
+          required: false
+          schema:
+            type: integer
+            default: 10
+        - in: query
+          name: threshold
+          required: false
+          schema:
+            type: number
+            format: float
+            default: 0.5
+      responses:
+        '200':
+          description: Similar songs ranked by cosine similarity
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  song_id:
+                    type: string
+                    format: uuid
+                  mode:
+                    type: string
+                  results:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        song_id:
+                          type: string
+                          format: uuid
+                        title:
+                          type: string
+                        artist:
+                          type: string
+                        similarity:
+                          type: number
+                          format: float
+
+  /songs/clusters:
+    get:
+      summary: Get Library Mood Clusters
+      description: Groups analyzed songs into dominant emotional mood clusters.
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  clusters:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        mood:
+                          type: string
+                        count:
+                          type: integer
+                        songs:
+                          type: array
+                          items:
+                            $ref: '#/components/schemas/Song'
+
+  /playlists/generate:
+    post:
+      summary: Generate Dynamic Vector Playlist
+      description: Chains tracks via 64-D multimodal nearest neighbors, applies smooth BPM sequencing, and outputs JSON or .m3u8 playlist file.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                seed_song_id:
+                  type: string
+                  format: uuid
+                mood:
+                  type: string
+                genre:
+                  type: string
+                target_count:
+                  type: integer
+                  default: 15
+                format:
+                  type: string
+                  enum: [json, m3u8]
+                  default: json
+      responses:
+        '200':
+          description: Generated playlist
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  playlist_name:
+                    type: string
+                  track_count:
+                    type: integer
+                  tracks:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/SongDetails'
+            application/x-mpegurl:
+              schema:
+                type: string
+                example: |
+                  #EXTM3U
+                  #EXTINF:210,Artist - Track Title
+                  /api/v1/songs/uuid/download
+
+  /sessions/{id}:
+    delete:
+      summary: Delete Session
+      description: Bulk deletes all tracks, metadata, vector records, and files uploaded under a given session.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: deleted
+                  session_id:
+                    type: string
+                  deleted_count:
+                    type: integer
+
+components:
+  schemas:
+    Song:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        session_id:
+          type: string
+        filename:
+          type: string
+        file_path:
+          type: string
+        format:
+          type: string
+          example: mp3
+        size_bytes:
+          type: integer
+        status:
+          type: string
+          enum: [uploaded, analyzing, analyzed, failed]
+        created_at:
+          type: string
+          format: date-time
+
+    SongDetails:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        session_id:
+          type: string
+        filename:
+          type: string
+        format:
+          type: string
+        size_bytes:
+          type: integer
+        status:
+          type: string
+        title:
+          type: string
+        artist:
+          type: string
+        album:
+          type: string
+        inferred_genre:
+          type: string
+        dominant_mood:
+          type: string
+        tempo:
+          type: number
+        created_at:
+          type: string
+          format: date-time
+
+    SongFeatures:
+      type: object
+      properties:
+        song_id:
+          type: string
+          format: uuid
+        tempo:
+          type: number
+        key:
+          type: string
+        mode:
+          type: string
+        valence:
+          type: number
+        energy:
+          type: number
+        danceability:
+          type: number
+        mood_vector:
+          type: array
+          items:
+            type: number
+
+    LyricsData:
+      type: object
+      properties:
+        song_id:
+          type: string
+          format: uuid
+        lyrics_plain:
+          type: string
+        lyrics_synced:
+          type: string
+          description: LRC timestamped lyrics
+        dominant_emotion:
+          type: string
+        sentiment_score:
+          type: number
+
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+
+  responses:
+    ErrorResponse:
+      description: Error Response
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'

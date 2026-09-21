@@ -11,4 +11,4 @@ librosa
 # Phase 4: Lyrics retrieval & Multimodal Sentiment Engine
 deep-translator
 transformers
-torch --index-url https://download.pytorch.org/whl/cpu
+

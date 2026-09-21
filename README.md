@@ -247,33 +247,42 @@ Open `http://localhost:5173` to explore the interactive 3D Mood Galaxy, upload y
 
 ---
 
-## ☁️ Deploying to AWS (Hackathon Guide)
+## ☁️ Deploying to AWS (ECS Fargate Production Guide)
 
-### Containerization
-Moodify is packaged into lightweight container images:
+Moodify uses an optimized multi-container task architecture in AWS ECS Fargate (`awsvpc` networking), persistent audio storage on Amazon EFS, and Amazon RDS Aurora PostgreSQL with `pgvector`.
+
+For the complete end-to-end guide, see [deploy/AWS_ECS_DEPLOYMENT.md](file:///home/ever/Code/Projects/Moodify/deploy/AWS_ECS_DEPLOYMENT.md).
+
+### 1. Build and Push Multi-Container Images to Amazon ECR
+
 ```bash
-# Build the Go API Server
-docker build -t moodify-api:latest -f Dockerfile .
+export AWS_REGION="us-east-1"
+export ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
 
-# Build the Python DSP & NLP Worker
-docker build -t moodify-worker:latest -f python/Dockerfile python/
+# Authenticate Docker to ECR
+aws ecr get-login-password --region $AWS_REGION | \
+  docker login --username AWS --password-stdin ${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com
+
+# 1. Build & Push Unified Backend (Go 1.22 + Python 3.11 DSP / RoBERTa)
+docker build --platform linux/amd64 -t moodify-backend:latest -f Dockerfile .
+docker tag moodify-backend:latest ${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/moodify-backend:latest
+docker push ${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/moodify-backend:latest
+
+# 2. Build & Push Frontend (Vite React SPA + Nginx Reverse Proxy)
+docker build --platform linux/amd64 -t moodify-frontend:latest -f frontend/Dockerfile frontend/
+docker tag moodify-frontend:latest ${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/moodify-frontend:latest
+docker push ${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/moodify-frontend:latest
 ```
 
-### Push to Amazon ECR
-```bash
-aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin <ACCOUNT_ID>.dkr.ecr.us-east-1.amazonaws.com
+### 2. Task Definition & Hardware Requirements
 
-docker tag moodify-api:latest <ACCOUNT_ID>.dkr.ecr.us-east-1.amazonaws.com/moodify-api:latest
-docker push <ACCOUNT_ID>.dkr.ecr.us-east-1.amazonaws.com/moodify-api:latest
-```
+The pre-configured task definition is available in [deploy/ecs-task-definition.json](file:///home/ever/Code/Projects/Moodify/deploy/ecs-task-definition.json).
 
-### Production Checklist
-1. **Amazon Aurora PostgreSQL**: Provision Aurora Serverless v2 with PostgreSQL 16 and run migrations from `internal/database/migrations/`.
-2. **Amazon S3**: Create private bucket `moodify-audio-<env>` with CORS enabled for direct frontend audio streaming.
-3. **Amazon SQS**: Create standard queue `moodify-analysis-queue` with Dead Letter Queue (DLQ) for failed audio feature jobs.
-4. **AWS ECS Fargate**:
-   - `moodify-api`: 0.5 vCPU, 1 GB RAM (scales on HTTP request count).
-   - `moodify-worker`: 2 vCPU, 4 GB RAM (scales on SQS queue depth).
+* **Memory Ceiling**: Specify at least **1 vCPU (1024)** and **4 GB RAM (4096)**. Neural transformer loading (PyTorch + RoBERTa) requires a minimum 3.2 GB working memory ceiling to avoid exit code 137 (OOM-Killed).
+* **Storage**: Mount an **Amazon EFS** volume to `/app/uploads` so audio files persist across Fargate task restarts.
+* **Networking**: In `awsvpc` mode, the Nginx frontend reverse-proxies `/api/v1/` to the backend over `127.0.0.1:8080`.
+* **Health Check**: Configured via `python3` urllib health probe against `http://127.0.0.1:8080/api/v1/health`.
+
 
 ---
 

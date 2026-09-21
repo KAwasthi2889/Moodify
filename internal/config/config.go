@@ -12,13 +12,15 @@ import (
 type Config struct {
 	// Server
 	ServerPort int `env:"SERVER_PORT" envDefault:"8080"`
+	Port       int `env:"PORT" envDefault:"0"`
 
 	// Database
-	DBHost     string `env:"DB_HOST,notEmpty" envDefault:"localhost"`
-	DBPort     int    `env:"DB_PORT" envDefault:"5432"`
-	DBUser     string `env:"DB_USER,required"`
-	DBPassword string `env:"DB_PASSWORD,required"`
-	DBName     string `env:"DB_NAME,required"`
+	DatabaseURL string `env:"DATABASE_URL" envDefault:""`
+	DBHost      string `env:"DB_HOST" envDefault:"localhost"`
+	DBPort      int    `env:"DB_PORT" envDefault:"5432"`
+	DBUser      string `env:"DB_USER" envDefault:"ever"`
+	DBPassword  string `env:"DB_PASSWORD" envDefault:""`
+	DBName      string `env:"DB_NAME" envDefault:"moods"`
 
 	// Storage & Session Lifecycle
 	UploadDir       string        `env:"UPLOAD_DIR,notEmpty" envDefault:"./uploads"`
@@ -53,8 +55,16 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("parsing config from environment: %w", err)
 	}
 
+	if cfg.Port > 0 && cfg.ServerPort == 8080 {
+		cfg.ServerPort = cfg.Port
+	}
+
 	if cfg.ServerPort < 1 || cfg.ServerPort > 65535 {
 		return nil, fmt.Errorf("SERVER_PORT must be between 1 and 65535, got %d", cfg.ServerPort)
+	}
+
+	if cfg.DatabaseURL == "" && (cfg.DBUser == "" || cfg.DBName == "") {
+		return nil, fmt.Errorf("either DATABASE_URL or (DB_USER and DB_NAME) must be configured")
 	}
 
 	return cfg, nil
@@ -62,6 +72,9 @@ func Load() (*Config, error) {
 
 // DSN returns the PostgreSQL connection string.
 func (c *Config) DSN() string {
+	if c.DatabaseURL != "" {
+		return c.DatabaseURL
+	}
 	return fmt.Sprintf(
 		"postgres://%s:%s@%s:%d/%s?sslmode=disable",
 		c.DBUser, c.DBPassword, c.DBHost, c.DBPort, c.DBName,

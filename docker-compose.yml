@@ -27,11 +27,13 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      PORT: 8080
+      SERVER_PORT: 8080
       DATABASE_URL: postgres://${DB_USER:-ever}:${DB_PASSWORD:-first_commit}@postgres:5432/${DB_NAME:-moods}?sslmode=disable
-      STORAGE_TYPE: local
-      STORAGE_LOCAL_PATH: /app/uploads
+      UPLOAD_DIR: /app/uploads
+      PYTHON_BIN: python3
       MAX_FILE_SIZE_MB: 35
+      ACOUSTID_API_KEY: ${ACOUSTID_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
     ports:
       - "8080:8080"
     volumes:

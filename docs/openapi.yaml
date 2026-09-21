@@ -255,6 +255,130 @@ paths:
         '404':
           $ref: '#/components/responses/ErrorResponse'
 
+  /songs/batch/download:
+    post:
+      summary: Batch Download Multiple Songs as ZIP
+      description: Compresses requested songs into a streaming ZIP archive with canonical dual-language filenames (e.g. `Title | English.ext`).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - song_ids
+              properties:
+                song_ids:
+                  type: array
+                  items:
+                    type: string
+                    format: uuid
+                  description: Array of song UUIDs to include in the ZIP archive
+      responses:
+        '200':
+          description: ZIP archive containing all requested audio files
+          headers:
+            Content-Disposition:
+              schema:
+                type: string
+                example: attachment; filename="moodify-tracks.zip"
+          content:
+            application/zip:
+              schema:
+                type: string
+                format: binary
+        '400':
+          $ref: '#/components/responses/ErrorResponse'
+
+    get:
+      summary: Batch Download Multiple Songs as ZIP via Query Param
+      description: Alternative GET endpoint for browser-friendly bulk ZIP downloads.
+      parameters:
+        - in: query
+          name: song_ids
+          required: true
+          schema:
+            type: string
+            example: "uuid1,uuid2,uuid3"
+          description: Comma-separated list of song UUIDs to include in the ZIP archive
+      responses:
+        '200':
+          description: ZIP archive containing all requested audio files
+          headers:
+            Content-Disposition:
+              schema:
+                type: string
+                example: attachment; filename="moodify-tracks.zip"
+          content:
+            application/zip:
+              schema:
+                type: string
+                format: binary
+        '400':
+          $ref: '#/components/responses/ErrorResponse'
+
+  /songs/{id}/embed:
+    post:
+      summary: Embed Metadata Tags into Audio File
+      description: Cleanly writes stored metadata (ID3v2.4 for MP3, MP4 atoms for M4A, Vorbis comments for FLAC/OPUS) directly into the physical audio file using mutagen.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Tags embedded successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+                  song_id:
+                    type: string
+                    format: uuid
+        '404':
+          $ref: '#/components/responses/ErrorResponse'
+
+  /songs/{id}/rename:
+    post:
+      summary: Rename Audio File on Disk
+      description: Physically renames the audio file on disk and updates the database using the canonical title convention (`Title.ext` or `Title | English.ext`).
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: File renamed successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+                  song_id:
+                    type: string
+                    format: uuid
+                  new_filename:
+                    type: string
+                    example: "Kesariya | Saffron.mp3"
+                  new_path:
+                    type: string
+        '404':
+          $ref: '#/components/responses/ErrorResponse'
+
+
   /songs/{id}:
     delete:
       summary: Delete Song
@@ -551,6 +675,9 @@ components:
           type: string
         title:
           type: string
+        english_title:
+          type: string
+          description: Romanized or English translation title for dual-language naming (e.g. Saffron for Kesariya)
         artist:
           type: string
         album:
